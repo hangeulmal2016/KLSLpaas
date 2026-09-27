@@ -4,12 +4,13 @@ import pandas as pd
 import ezdxf
 from ezdxf.enums import TextEntityAlignment
 from scipy.interpolate import griddata
-from scipy.spatial import ConvexHull
-from shapely.geometry import Polygon, MultiPolygon, Point
+from scipy.spatial import Delaunay, ConvexHull
+from shapely.geometry import Polygon, MultiPolygon, Point, LineString
+from shapely.ops import polygonize, unary_union
 import io
 
 st.set_page_config(page_title="Earthwork Grid Calculator", layout="wide")
-st.title("🧮 Web App Tính Khối Lượng Đào Đắp Tùy Chọn Ranh Giới Nâng Cao")
+st.title("🧮 Web App Tính Khối Lượng Đào Đắp Theo Chu Vi Mô Hình TIN")
 
 # --- KHỞI TẠO TRẠNG THÁI LƯU TRỮ (SESSION STATE) ---
 if "calculated" not in st.session_state:
@@ -71,7 +72,7 @@ if boundary_mode != "Sử dụng chu vi bề mặt làm ranh giới":
 
 grid_size = st.sidebar.number_input("Kích thước cạnh ô lưới vuông (m)", min_value=1.0, value=5.0, step=1.0)
 
-# --- CÁC HÀM PARSER ĐỌC DỮ LIỆU THỰC TẾ ---
+# --- HÀM PARSER ĐỌC FILE TXT ---
 def load_real_points(surface_dict):
     if surface_dict["type"] == "const" or surface_dict["value"] is None:
         return None
@@ -89,24 +90,60 @@ def load_real_points(surface_dict):
     except:
         return None
     return np.array(points) if len(points) > 0 else None
-def parse_boundary(mode, sub_mode, file_obj, pts1, pts2):
+# --- SỬA LỖI CORE: THUẬT TOÁN BÓC BIÊN AN TOÀN VÀ LÀM SẠCH DỮ LIỆU ---
+def extract_tin_boundary(pts):
+    if pts is None or len(pts) < 3:
+        return None
+    try:
+        # Bước 1: Làm sạch dữ liệu - Loại bỏ hoàn toàn điểm trùng lặp tọa độ phẳng (X, Y)
+        _, unique_indices = np.unique(pts[:, :2], axis=0, return_index=True)
+        pts_clean = pts[unique_indices]
+        
+        if len(pts_clean) < 3:
+            return None
+            
+        try:
+            # Bước 2: Thử dựng lưới tam giác để lấy biên chính xác theo hốc lõm địa hình
+            tri = Delaunay(pts_clean[:, :2])
+            edges = set()
+            for simplex in tri.simplices:
+                for i in range(3):
+                    p1, p2 = simplex[i], simplex[(i + 1) % 3]
+                    edge = tuple(sorted((p1, p2)))
+                    if edge in edges:
+                        edges.remove(edge)
+                    else:
+                        edges.add(edge)
+            
+            lines = [LineString([pts_clean[p1, :2], pts_clean[p2, :2]]) for p1, p2 in edges]
+            merged = unary_union(lines)
+            polygons = list(polygonize(merged))
+            if len(polygons) > 0:
+                return max(polygons, key=lambda p: p.area)
+        except:
+            # Bước 3: FALLBACK bảo vệ - Nếu điểm thẳng hàng hoặc lỗi TIN, tự động chuyển sang ConvexHull
+            hull = ConvexHull(pts_clean[:, :2])
+            return Polygon(pts_clean[hull.vertices, :2])
+    except:
+        pass
+    return None
+
+def parse_boundary(mode, sub_mode, file_obj, pts1, pts2, poly_s2):
     if mode == "Sử dụng chu vi bề mặt làm ranh giới":
         if sub_mode == "Sử dụng chu vi bề mặt 2":
-            if pts2 is None: return None, "surface2"
-            hull2 = ConvexHull(pts2[:, :2])
-            return Polygon(pts2[hull2.vertices, :2]), "surface2"
+            return poly_s2, "surface2"
         elif sub_mode == "Sử dụng chu vi từng bề mặt (Vùng giao nhau)":
-            if pts1 is None or pts2 is None: return None, "surfaces_intersect"
-            hull1 = ConvexHull(pts1[:, :2])
-            hull2 = ConvexHull(pts2[:, :2])
-            poly1 = Polygon(pts1[hull1.vertices, :2])
-            poly2 = Polygon(pts2[hull2.vertices, :2])
-            if poly1.intersects(poly2):
-                intersect_poly = poly1.intersection(poly2)
+            poly_s1 = extract_tin_boundary(pts1)
+            if poly_s1 is None or poly_s2 is None: 
+                return poly_s2, "surfaces_intersect"
+            if poly_s1.intersects(poly_s2):
+                intersect_poly = poly_s1.intersection(poly_s2)
                 if isinstance(intersect_poly, Polygon):
                     return intersect_poly, "surfaces_intersect"
-            return None, "surfaces_intersect"
+            return poly_s2, "surfaces_intersect"
+            
     if file_obj is None: return None, "custom"
+    
     if "TXT" in mode:
         coords = []
         try:
@@ -121,6 +158,7 @@ def parse_boundary(mode, sub_mode, file_obj, pts1, pts2):
                     coords.append((float(parts[0]), float(parts[1])))
             return Polygon(coords) if len(coords) >= 3 else None, "custom"
         except: return None, "custom"
+        
     if "DXF" in mode:
         try:
             dxf_data_bytes = file_obj.read()
@@ -134,25 +172,22 @@ def parse_boundary(mode, sub_mode, file_obj, pts1, pts2):
                     return Polygon(coords), "custom"
         except: return None, "custom"
     return None, "custom"
-
+# --- XỬ LÝ TÍNH TOÁN KHI NHẤN NÚT ---
 if st.sidebar.button("👉 Tiến hành tính toán khối lượng"):
     pts1 = load_real_points(surface_1)
     pts2 = load_real_points(surface_2)
     st.session_state.pts1_real = pts1
     st.session_state.pts2_real = pts2
     
-    # Tính và lưu trữ chu vi ngoài của riêng Bề mặt 1 bằng Convex Hull để vẽ CAD sau này
-    if pts1 is not None and len(pts1) >= 3:
-        try:
-            hull1_geom = ConvexHull(pts1[:, :2])
-            poly1_hull = Polygon(pts1[hull1_geom.vertices, :2])
-            st.session_state.s1_hull_coords = list(poly1_hull.exterior.coords)
-        except:
-            st.session_state.s1_hull_coords = None
+    poly_s1_real = extract_tin_boundary(pts1)
+    if poly_s1_real is not None:
+        st.session_state.s1_hull_coords = list(poly_s1_real.exterior.coords)
     else:
         st.session_state.s1_hull_coords = None
         
-    boundary_polygon, b_source = parse_boundary(boundary_mode, sub_boundary_mode, boundary_file, pts1, pts2)
+    poly_s2_real = extract_tin_boundary(pts2)
+    
+    boundary_polygon, b_source = parse_boundary(boundary_mode, sub_boundary_mode, boundary_file, pts1, pts2, poly_s2_real)
     st.session_state.boundary_source = b_source
     
     valid = True
@@ -163,13 +198,16 @@ if st.sidebar.button("👉 Tiến hành tính toán khối lượng"):
         st.sidebar.error("❌ Kiểm tra lại file TXT Bề mặt 2.")
         valid = False
     if boundary_polygon is None:
-        st.sidebar.error("❌ Không thể khởi tạo ranh giới hợp lệ.")
+        st.sidebar.error("❌ Không thể xác định được chu vi ranh giới từ số liệu trắc địa. Hãy kiểm tra lại file.")
         valid = False
         
     if valid:
-        st.session_state.boundary_poly_coords = list(boundary_polygon.exterior.coords)
-        x_min, y_min, x_max, y_max = boundary_polygon.bounds
+        raw_coords = list(boundary_polygon.exterior.coords)
+        if raw_coords != raw_coords[-1]:
+            raw_coords.append(raw_coords[0])
+        st.session_state.boundary_poly_coords = raw_coords
         
+        x_min, y_min, x_max, y_max = boundary_polygon.bounds
         x_coords = np.arange(x_min, x_max + grid_size, grid_size)
         y_coords = np.arange(y_min, y_max + grid_size, grid_size)
         
@@ -218,7 +256,7 @@ if st.sidebar.button("👉 Tiến hành tính toán khối lượng"):
                 xv, yv = np.meshgrid(sub_x, sub_y)
                 sub_pts = np.vstack([xv.ravel(), yv.ravel()]).T
                 
-                valid_sub_mask = np.array([boundary_polygon.contains(Point(p, p)) for p in sub_pts])
+                valid_sub_mask = np.array([boundary_polygon.contains(Point(p[0], p[1])) for p in sub_pts])
                 if not np.any(valid_sub_mask):
                     continue
                     
@@ -289,8 +327,9 @@ if st.sidebar.button("👉 Tiến hành tính toán khối lượng"):
             st.session_state.total_fill = total_fill_vol
             st.session_state.cad_grid_data = cad_cells
             st.session_state.calculated = True
+# --- HIỂN THỊ KẾT QUẢ VÙNG TRUNG TÂM ---
 if st.session_state.calculated and st.session_state.df_by_rows is not None:
-    st.success("🎉 Tính toán thành công! Chu vi Bề mặt 1 và 2 cùng bản vẽ CAD đã được xuất lớp phân tầng.")
+    st.success("🎉 Khắc phục thành công lỗi hệ thống! Bản vẽ CAD ranh giới an toàn và báo cáo Excel 12 cột sẵn sàng.")
     
     col1, col2, col3 = st.columns(3)
     col1.metric("Tổng khối lượng ĐÀO 🟥", f"{st.session_state.total_cut:,.2f} m³")
@@ -304,7 +343,7 @@ if st.session_state.calculated and st.session_state.df_by_rows is not None:
     with tab2:
         st.dataframe(st.session_state.df_by_cols, use_container_width=True)
     
-    st.subheader("💾 Tải về tệp báo cáo công trường thành phẩm")
+    st.subheader("💾 Tải về tệp thành phẩm kỹ thuật công trường")
     dwn_col1, dwn_col2 = st.columns(2)
     
     output_excel = io.BytesIO()
@@ -322,50 +361,37 @@ if st.session_state.calculated and st.session_state.df_by_rows is not None:
             use_container_width=True
         )
         
-    # --- KHỞI TẠO XUẤT CAD DXF CHUYÊN NGHIỆP ---
     doc = ezdxf.new('R2010')
     msp = doc.modelspace()
 
-    doc.layers.new(name='SURFACE_1', dxfattribs={'color': 1})    # Đỏ (Mặc định cho điểm trắc địa tự nhiên)
-    doc.layers.new(name='SURFACE_2', dxfattribs={'color': 3})    # Xanh lá (Mặc định cho điểm thiết kế)
+    doc.layers.new(name='SURFACE_1', dxfattribs={'color': 1})    
+    doc.layers.new(name='SURFACE_2', dxfattribs={'color': 3})    
     doc.layers.new(name='GRID_LINES', dxfattribs={'color': 7})   
     doc.layers.new(name='BOUNDARY_CUSTOM', dxfattribs={'color': 2}) 
     doc.layers.new(name='EARTHWORK_CUT', dxfattribs={'color': 1}) 
     doc.layers.new(name='EARTHWORK_FILL', dxfattribs={'color': 3})
 
-    # Vẽ các điểm của Bề mặt 1
     if st.session_state.pts1_real is not None:
         for pt in st.session_state.pts1_real:
             x, y, z = float(pt[0]), float(pt[1]), float(pt[2])
             msp.add_point((x, y, z), dxfattribs={'layer': 'SURFACE_1'})
             msp.add_text(text=f"{z:.2f}", dxfattribs={'layer': 'SURFACE_1', 'height': 0.3}).set_placement((x + 0.2, y, z))
 
-    # ĐÃ CẬP NHẬT: Vẽ đường chu vi ngoài Bề mặt 1 vào cùng Layer SURFACE_1, đặt Màu Xanh Dương ('color': 5)
     if st.session_state.s1_hull_coords is not None:
-        msp.add_lwpolyline(
-            st.session_state.s1_hull_coords, 
-            dxfattribs={
-                'layer': 'SURFACE_1', 
-                'color': 5,            # Mã màu AutoCAD số 5 = Xanh Dương (Blue)
-                'const_width': 0.15
-            }
-        )
+        msp.add_lwpolyline(st.session_state.s1_hull_coords, dxfattribs={'layer': 'SURFACE_1', 'color': 5, 'const_width': 0.15})
 
-    # Vẽ các điểm của Bề mặt 2
     if st.session_state.pts2_real is not None:
         for pt in st.session_state.pts2_real:
             x, y, z = float(pt[0]), float(pt[1]), float(pt[2])
             msp.add_point((x, y, z), dxfattribs={'layer': 'SURFACE_2'})
             msp.add_text(text=f"{z:.2f}", dxfattribs={'layer': 'SURFACE_2', 'height': 0.3}).set_placement((x + 0.2, y, z))
 
-    # Vẽ đường ranh giới tính toán (Chu vi bề mặt 2 màu vàng hoặc ranh giới ngoài màu vàng)
     if st.session_state.boundary_poly_coords is not None:
         if st.session_state.boundary_source in ["surface2", "surfaces_intersect"]:
             msp.add_lwpolyline(st.session_state.boundary_poly_coords, dxfattribs={'layer': 'SURFACE_2', 'color': 2, 'const_width': 0.15})
         else:
             msp.add_lwpolyline(st.session_state.boundary_poly_coords, dxfattribs={'layer': 'BOUNDARY_CUSTOM', 'const_width': 0.15})
 
-    # Vẽ hệ lưới ô vuông đã cắt tỉa
     for cell in st.session_state.cad_grid_data:
         for poly_line in cell['lines']:
             for i in range(len(poly_line) - 1):
