@@ -109,12 +109,12 @@ if step == "[BƯỚC 1] Xác lập Bề mặt 1":
                 st.caption(f"💡 Hệ thống tự động nhận diện gốc: **{auto_crs}**")
             
             with c2:
-                gc = st.columns(4)
-                col_x = gc.selectbox("Trục X (East):", df_raw.columns, index=suggestions["E"])
-                col_y = gc.selectbox("Trục Y (North):", df_raw.columns, index=suggestions["N"])
-                col_z = gc.selectbox("Trục Z (Cao độ H):", df_raw.columns, index=suggestions["Z"])
+                gc_x, gc_y, gc_z, gc_id_col = st.columns(4)
+                col_x = gc_x.selectbox("Trục X (East):", df_raw.columns, index=suggestions["E"])
+                col_y = gc_y.selectbox("Trục Y (North):", df_raw.columns, index=suggestions["N"])
+                col_z = gc_z.selectbox("Trục Z (Cao độ H):", df_raw.columns, index=suggestions["Z"])
                 id_opts = ["-- Tự động đánh STT --"] + list(df_raw.columns)
-                col_id = gc.selectbox("Cột ID (Số TT):", id_opts, index=suggestions["ID"] + 1 if suggestions["ID"] != 0 else 0)
+                col_id = gc_id_col.selectbox("Cột ID (Số TT):", id_opts, index=suggestions["ID"] + 1 if suggestions["ID"] != 0 else 0)
 
             if st.button("🔄 CẬP NHẬT TẬP ĐIỂM BỀ MẶT 1", type="primary"):
                 df_proc = pd.DataFrame()
@@ -186,8 +186,8 @@ elif step == "[BƯỚC 2] Xây dựng Boundary Tổng quát":
                         st.dataframe(df_ranh_raw.head(3))
                         sug_r = suggest_headings(df_ranh_raw.columns)
                         gc_r = st.columns(2)
-                        rx = gc_r.selectbox("Cột trục X (Ranh):", df_ranh_raw.columns, index=sug_r["E"])
-                        ry = gc_r.selectbox("Cột trục Y (Ranh):", df_ranh_raw.columns, index=sug_r["N"])
+                        rx = gc_r[0].selectbox("Cột trục X (Ranh):", df_ranh_raw.columns, index=sug_r["E"])
+                        ry = gc_r[1].selectbox("Cột trục Y (Ranh):", df_ranh_raw.columns, index=sug_r["N"])
                         
                         if st.button("🏗️ XÁC ĐỊNH RANH GIỚI ẤN ĐỊNH"):
                             df_r = pd.DataFrame({'X': pd.to_numeric(df_ranh_raw[rx]), 'Y': pd.to_numeric(df_ranh_raw[ry])}).dropna()
@@ -205,11 +205,11 @@ elif step == "[BƯỚC 2] Xây dựng Boundary Tổng quát":
                 if df_raw_2 is not None:
                     sug_2 = suggest_headings(df_raw_2.columns)
                     
-                    gc2 = st.columns(4)
-                    c2_x = gc2.selectbox("Trục X (E) Bề mặt 2:", df_raw_2.columns, index=sug_2["E"])
-                    c2_y = gc2.selectbox("Trục Y (N) Bề mặt 2:", df_raw_2.columns, index=sug_2["N"])
-                    c2_z = gc2.selectbox("Trục Z (H) Bề mặt 2:", df_raw_2.columns, index=sug_2["Z"])
-                    c2_id = gc2.selectbox("Cột ID Bề mặt 2:", ["-- Tự động đánh STT --"] + list(df_raw_2.columns), index=sug_2["ID"]+1 if sug_2["ID"]!=0 else 0)
+                    gc2_x, gc2_y, gc2_z, gc2_id_col = st.columns(4)
+                    c2_x = gc2_x.selectbox("Trục X (E) Bề mặt 2:", df_raw_2.columns, index=sug_2["E"])
+                    c2_y = gc2_y.selectbox("Trục Y (N) Bề mặt 2:", df_raw_2.columns, index=sug_2["N"])
+                    c2_z = gc2_z.selectbox("Trục Z (H) Bề mặt 2:", df_raw_2.columns, index=sug_2["Z"])
+                    c2_id = gc2_id_col.selectbox("Cột ID Bề mặt 2:", ["-- Tự động đánh STT --"] + list(df_raw_2.columns), index=sug_2["ID"]+1 if sug_2["ID"]!=0 else 0)
                     
                     if st.button("🔄 CẬP NHẬT TẬP ĐIỂM BỀ MẶT 2"):
                         df_proc_2 = pd.DataFrame()
@@ -304,11 +304,11 @@ elif step == "[BƯỚC 5] Xuất Báo cáo & File DXF":
                 msp.add_text(f"{row['Z']:.2f}", dxfattribs={'layer': 'Layer_Be_Mat_1', 'height': 0.4}).set_placement((row['X'] + 0.15, row['Y'] + 0.15, row['Z']))
             
             if st.session_state['boundary_1'] is not None:
-                pts_b1 = [(p[0], p[1]) for p in st.session_state['boundary_1']]
+                pts_b1 = [(p, p) for p in st.session_state['boundary_1']]
                 msp.add_lwpolyline(pts_b1, dxfattribs={'layer': 'Layer_Be_Mat_1', 'flags': 1})
                 
             if st.session_state['boundary_2'] is not None:
-                pts_b2 = [(p[0], p[1]) for p in st.session_state['boundary_2']]
+                pts_b2 = [(p, p) for p in st.session_state['boundary_2']]
                 msp.add_lwpolyline(pts_b2, dxfattribs={'layer': 'Layer_Be_Mat_2', 'flags': 1})
                 
             if st.session_state['final_boundaries']:
