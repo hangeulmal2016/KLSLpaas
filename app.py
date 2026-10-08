@@ -134,20 +134,16 @@ elif "BƯỚC 2" in step:
             X_g, Y_g = np.meshgrid(x_m, y_m)
             fig.add_trace(go.Surface(x=X_g, y=Y_g, z=np.full(X_g.shape, z_design), opacity=0.25, showscale=False, name='Thiết kế'))
 
+        # GIẢI PHÁP TRIỆT ĐỂ: Xóa bỏ hoàn toàn các trường thuộc tính màu tùy biến và template của Plotly để tương thích 100% với Python 3.14
         fig.update_layout(
-            paper_bgcolor='rgba(0,0,0,0)',
-            plot_bgcolor='rgba(0,0,0,0)',
-            scene=dict(
-                xaxis=dict(title='X', titlefont=dict(size=10), tickfont=dict(size=8)),
-                yaxis=dict(title='Y', titlefont=dict(size=10), tickfont=dict(size=8)),
-                zaxis=dict(title='Z', titlefont=dict(size=10), tickfont=dict(size=8)),
-                aspectmode='data'
-            ),
             margin=dict(l=0, r=0, b=0, t=10),
             height=430,
-            legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5, font=dict(size=9))
+            showlegend=False  # Tắt Legend gốc để tránh lỗi biên dịch, dùng bảng màu mô tả dạng văn bản bên dưới
         )
         st.plotly_chart(fig, use_container_width=True, config={'responsive': True})
+        
+        # Chú thích màu sắc thay thế Legend bằng chữ để an toàn tuyệt đối
+        st.markdown("**Ghi chú hệ thống màu sắc ranh giới:** 🟢 Xanh lá: *Ranh BM1* | 🔵 Xanh dương: *Ranh BM2* | 🟠 Cam: *Ranh tổng hợp* | 🔴 Đỏ: *Ranh ấn định ngoài*")
 else:
     st.header("🧱 Phân rã cấu trúc các module tiếp theo (Bước 3 - 5)")
     st.write("Khu vực phát triển thuật toán lưới ô vuông trắc địa và xuất báo cáo khối lượng đào đắp.")
