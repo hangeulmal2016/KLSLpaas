@@ -302,7 +302,8 @@ elif step == "[BƯỚC 3 & 4] Chi tiết & Tính Khối lượng":
                     x, y = p_tri[:, 0], p_tri[:, 1]
                     area_2d = 0.5 * np.abs(x[0]*(y[1]-y[2]) + x[1]*(y[2]-y[0]) + x[2]*(y[0]-y[1]))
                     z_s1 = z1[simplex]
-                    z_s2 = [interpolate_tin_z(pt, tri2, z2) or pt[2] for pt in p_tri]
+z_s2 = [interpolate_tin_z(pt, tri2, z2) if interpolate_tin_z(pt, tri2, z2) is not None else z_s1[i] for i, pt in enumerate(p_tri)]
+
                     h_diff_avg = (z_s1 - np.array(z_s2)).mean()
                     v_prism = area_2d * h_diff_avg
                     if v_prism > 0: total_cut += v_prism
