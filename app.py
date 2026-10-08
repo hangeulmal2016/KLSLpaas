@@ -26,7 +26,7 @@ if 'surface_2_crs' not in st.session_state: st.session_state['surface_2_crs'] = 
 if 'final_boundary_type' not in st.session_state: st.session_state['final_boundary_type'] = None
 if 'final_boundaries' not in st.session_state: st.session_state['final_boundaries'] = []  
 if 'design_height_value' not in st.session_state: st.session_state['design_height_value'] = 0.0
-# --- CÁC HÀM TRỢ NĂNG XỬ LÝ SỐ LIỆU TRẮC ĐỊA ---
+# --- CẤU HÌNH CÁC HÀM THUẬT TOÁN NỀN TẢNG ---
 def detect_coordinate_system(df, sample_cols):
     """Tự động nhận dạng hệ tọa độ dựa trên dải giá trị dữ liệu số tại Việt Nam"""
     for col in sample_cols:
@@ -193,6 +193,7 @@ elif step == "[BƯỚC 2] Xây dựng Boundary Tổng quát":
                             if b_fixed is not None:
                                 st.session_state['final_boundaries'] = [Polygon(b_fixed)]
                                 st.success("Đã ghi nhận đường ranh giới ấn định thủ công từ kỹ sư (Màu Red)!")
+
         elif option_calc == "2. Tính so với Mặt bằng cơ sở":
             st.session_state['final_boundary_type'] = "Mặt bằng cơ sở"
             st.markdown("##### 🗂️ Cấu hình dữ liệu Bề mặt 2 (Mặt bằng cơ sở)")
@@ -212,10 +213,10 @@ elif step == "[BƯỚC 2] Xây dựng Boundary Tổng quát":
                     if st.button("🔄 CẬP NHẬT TẬP ĐIỂM BỀ MẶT 2"):
                         df_proc_2 = pd.DataFrame()
                         df_proc_2['ID'] = range(1, len(df_raw_2) + 1) if c2_id == "-- Tự động đánh STT --" else df_raw_2[c2_id]
-                        df_proc_2['X'] = pd.to_numeric(df_raw_2[c2_x])
-                        df_proc_2['Y'] = pd.to_numeric(df_raw_2[c2_y])
-                        df_proc_2['Z'] = pd.to_numeric(df_raw_2[c2_z])
-                        df_proc_2 = df_proc_2.dropna()
+                        df_proc_2['X'] = pd.to_numeric(df_raw_2[c2_x], errors='coerce')
+                        df_proc_2['Y'] = pd.to_numeric(df_raw_2[c2_y], errors='coerce')
+                        df_proc_2['Z'] = pd.to_numeric(df_raw_2[c2_z], errors='coerce')
+                        df_proc_2 = df_proc_2.dropna(subset=['X', 'Y', 'Z'])
                         
                         st.session_state['surface_2_df'] = df_proc_2
                         st.session_state['boundary_2'] = compute_convex_hull(df_proc_2)
@@ -259,14 +260,14 @@ elif step == "[BƯỚC 3 & 4] Chi tiết & Tính Khối lượng":
         
         df1 = st.session_state['surface_1_df']
         pts1 = df1[['X', 'Y']].values
-        z1 = df1['Z'].values
+        z1 = df1['Z'].values.astype(float)
         vung_ranh = unary_union(st.session_state['final_boundaries'])
         
         tri1 = Delaunay(pts1)
         total_cut, total_fill, valid_triangles_count = 0.0, 0.0, 0
         
         if st.session_state['final_boundary_type'] == "Cao độ thiết kế":
-            h_tk = st.session_state['design_height_value']
+            h_tk = float(st.session_state['design_height_value'])
             for simplex in tri1.simplices:
                 p_tri = pts1[simplex]
                 centroid = ShapePoint(p_tri[:, 0].mean(), p_tri[:, 1].mean())
@@ -282,7 +283,7 @@ elif step == "[BƯỚC 3 & 4] Chi tiết & Tính Khối lượng":
         elif st.session_state['final_boundary_type'] == "Mặt bằng cơ sở" and st.session_state['surface_2_df'] is not None:
             df2 = st.session_state['surface_2_df']
             pts2 = df2[['X', 'Y']].values
-            z2 = df2['Z'].values
+            z2 = df2['Z'].values.astype(float)
             tri2 = Delaunay(pts2)
             
             def interpolate_tin_z(point, delaunay_obj, z_values):
@@ -290,8 +291,9 @@ elif step == "[BƯỚC 3 & 4] Chi tiết & Tính Khối lượng":
                 if idx < 0: return None
                 b = delaunay_obj.transform[idx]
                 r = b[:2].dot(point - delaunay_obj.points[delaunay_obj.simplices[idx, 2]])
-                c = np.array([r, r, 1 - r - r])
-                return np.dot(c, z_values[delaunay_obj.simplices[idx]])
+                c = np.array([r[0], r[1], 1 - r[0] - r[1]], dtype=float)
+                z_vertex_values = z_values[delaunay_obj.simplices[idx]].astype(float)
+                return float(np.dot(c, z_vertex_values))
 
             for simplex in tri1.simplices:
                 p_tri = pts1[simplex]
@@ -304,8 +306,8 @@ elif step == "[BƯỚC 3 & 4] Chi tiết & Tính Khối lượng":
                     z_s2 = []
                     for i, pt in enumerate(p_tri):
                         z_val = interpolate_tin_z(pt, tri2, z2)
-                        z_s2.append(z_val if z_val is not None else z_s1[i])
-                    h_diff_avg = (z_s1 - np.array(z_s2)).mean()
+                        z_s2.append(z_val if z_val is not None else float(z_s1[i]))
+                    h_diff_avg = (z_s1 - np.array(z_s2, dtype=float)).mean()
                     v_prism = area_2d * h_diff_avg
                     if v_prism > 0: total_cut += v_prism
                     else: total_fill += abs(v_prism)
