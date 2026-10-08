@@ -134,9 +134,8 @@ elif "BƯỚC 2" in step:
             X_g, Y_g = np.meshgrid(x_m, y_m)
             fig.add_trace(go.Surface(x=X_g, y=Y_g, z=np.full(X_g.shape, z_design), opacity=0.25, showscale=False, name='Thiết kế'))
 
-        # Khắc phục triệt để ValueError: Loại bỏ hoàn toàn thuộc tính template="plotly_dark" gây lỗi trên Python 3.14
         fig.update_layout(
-            paper_bgcolor='rgba(0,0,0,0)', # Trong suốt nền canvas để tiệp với giao diện nền tối của Streamlit
+            paper_bgcolor='rgba(0,0,0,0)',
             plot_bgcolor='rgba(0,0,0,0)',
             scene=dict(
                 xaxis=dict(title='X', titlefont=dict(size=10), tickfont=dict(size=8)),
@@ -148,3 +147,7 @@ elif "BƯỚC 2" in step:
             height=430,
             legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5, font=dict(size=9))
         )
+        st.plotly_chart(fig, use_container_width=True, config={'responsive': True})
+else:
+    st.header("🧱 Phân rã cấu trúc các module tiếp theo (Bước 3 - 5)")
+    st.write("Khu vực phát triển thuật toán lưới ô vuông trắc địa và xuất báo cáo khối lượng đào đắp.")
