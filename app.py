@@ -186,8 +186,8 @@ elif step == "[BƯỚC 2] Xây dựng Boundary Tổng quát":
                         st.dataframe(df_ranh_raw.head(3))
                         sug_r = suggest_headings(df_ranh_raw.columns)
                         gc_r = st.columns(2)
-                        rx = gc_r[0].selectbox("Cột trục X (Ranh):", df_ranh_raw.columns, index=sug_r["E"])
-                        ry = gc_r[1].selectbox("Cột trục Y (Ranh):", df_ranh_raw.columns, index=sug_r["N"])
+                        rx = gc_r.selectbox("Cột trục X (Ranh):", df_ranh_raw.columns, index=sug_r["E"])
+                        ry = gc_r.selectbox("Cột trục Y (Ranh):", df_ranh_raw.columns, index=sug_r["N"])
                         
                         if st.button("🏗️ XÁC ĐỊNH RANH GIỚI ẤN ĐỊNH"):
                             df_r = pd.DataFrame({'X': pd.to_numeric(df_ranh_raw[rx]), 'Y': pd.to_numeric(df_ranh_raw[ry])}).dropna()
@@ -303,18 +303,20 @@ elif step == "[BƯỚC 5] Xuất Báo cáo & File DXF":
                 msp.add_point((row['X'], row['Y'], row['Z']), dxfattribs={'layer': 'Layer_Be_Mat_1'})
                 msp.add_text(f"{row['Z']:.2f}", dxfattribs={'layer': 'Layer_Be_Mat_1', 'height': 0.4}).set_placement((row['X'] + 0.15, row['Y'] + 0.15, row['Z']))
             
+            # ĐÃ VÁ LỖI MẢNG ĐIỂM CHO BỀ MẶT 1
             if st.session_state['boundary_1'] is not None:
-                pts_b1 = [(p, p) for p in st.session_state['boundary_1']]
+                pts_b1 = [(float(pt[0]), float(pt[1])) for pt in st.session_state['boundary_1']]
                 msp.add_lwpolyline(pts_b1, dxfattribs={'layer': 'Layer_Be_Mat_1', 'flags': 1})
                 
+            # ĐÃ VÁ LỖI MẢNG ĐIỂM CHO BỀ MẶT 2
             if st.session_state['boundary_2'] is not None:
-                pts_b2 = [(p, p) for p in st.session_state['boundary_2']]
+                pts_b2 = [(float(pt[0]), float(pt[1])) for pt in st.session_state['boundary_2']]
                 msp.add_lwpolyline(pts_b2, dxfattribs={'layer': 'Layer_Be_Mat_2', 'flags': 1})
                 
+            # ĐÃ VÁ LỖI MẢNG ĐIỂM CHO RANH TỔNG HỢP
             if st.session_state['final_boundaries']:
                 for poly in st.session_state['final_boundaries']:
-                    x_b, y_b = poly.exterior.coords.xy
-                    pts_fb = list(zip(x_b, y_b))
+                    pts_fb = [(float(pt[0]), float(pt[1])) for pt in poly.exterior.coords]
                     msp.add_lwpolyline(pts_fb, dxfattribs={'layer': 'Layer_Ranh_Tong_Hop', 'flags': 1})
 
             out_stream = io.StringIO()
