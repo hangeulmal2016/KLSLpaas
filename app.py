@@ -184,8 +184,8 @@ elif step == "[BƯỚC 2] Xây dựng Boundary Tổng quát":
                         st.dataframe(df_ranh_raw.head(3))
                         sug_r = suggest_headings(df_ranh_raw.columns)
                         gc_r = st.columns(2)
-                        rx = gc_r[0].selectbox("Cột trục X (Ranh):", df_ranh_raw.columns, index=sug_r["E"])
-                        ry = gc_r[1].selectbox("Cột trục Y (Ranh):", df_ranh_raw.columns, index=sug_r["N"])
+                        rx = gc_r.selectbox("Cột trục X (Ranh):", df_ranh_raw.columns, index=sug_r["E"])
+                        ry = gc_r.selectbox("Cột trục Y (Ranh):", df_ranh_raw.columns, index=sug_r["N"])
                         
                         if st.button("🏗️ XÁC ĐỊNH RANH GIỚI ẤN ĐỊNH"):
                             df_r = pd.DataFrame({'X': pd.to_numeric(df_ranh_raw[rx]), 'Y': pd.to_numeric(df_ranh_raw[ry])}).dropna()
@@ -193,7 +193,6 @@ elif step == "[BƯỚC 2] Xây dựng Boundary Tổng quát":
                             if b_fixed is not None:
                                 st.session_state['final_boundaries'] = [Polygon(b_fixed)]
                                 st.success("Đã ghi nhận đường ranh giới ấn định thủ công từ kỹ sư (Màu Red)!")
-
         elif option_calc == "2. Tính so với Mặt bằng cơ sở":
             st.session_state['final_boundary_type'] = "Mặt bằng cơ sở"
             st.markdown("##### 🗂️ Cấu hình dữ liệu Bề mặt 2 (Mặt bằng cơ sở)")
@@ -291,7 +290,7 @@ elif step == "[BƯỚC 3 & 4] Chi tiết & Tính Khối lượng":
                 if idx < 0: return None
                 b = delaunay_obj.transform[idx]
                 r = b[:2].dot(point - delaunay_obj.points[delaunay_obj.simplices[idx, 2]])
-                c = np.array([r[0], r[1], 1 - r[0] - r[1]])
+                c = np.array([r, r, 1 - r - r])
                 return np.dot(c, z_values[delaunay_obj.simplices[idx]])
 
             for simplex in tri1.simplices:
@@ -302,8 +301,10 @@ elif step == "[BƯỚC 3 & 4] Chi tiết & Tính Khối lượng":
                     x, y = p_tri[:, 0], p_tri[:, 1]
                     area_2d = 0.5 * np.abs(x[0]*(y[1]-y[2]) + x[1]*(y[2]-y[0]) + x[2]*(y[0]-y[1]))
                     z_s1 = z1[simplex]
-z_s2 = [interpolate_tin_z(pt, tri2, z2) if interpolate_tin_z(pt, tri2, z2) is not None else z_s1[i] for i, pt in enumerate(p_tri)]
-
+                    z_s2 = []
+                    for i, pt in enumerate(p_tri):
+                        z_val = interpolate_tin_z(pt, tri2, z2)
+                        z_s2.append(z_val if z_val is not None else z_s1[i])
                     h_diff_avg = (z_s1 - np.array(z_s2)).mean()
                     v_prism = area_2d * h_diff_avg
                     if v_prism > 0: total_cut += v_prism
