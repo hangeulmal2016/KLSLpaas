@@ -61,11 +61,12 @@ elif "BƯỚC 2" in step:
         st.warning("⚠️ Vui lòng hoàn thành [BƯỚC 1] trước.")
     else:
         pa_tinh = st.radio("Chọn Phương án tính toán:", ["1. Tính theo Cao độ thiết kế", "2. Tính so với Mặt bằng cơ sở"])
-        boundary_mode, z_design = "", 0.0
+        boundary_mode = "Mặt bằng hiện hữu"
+        z_design = 0.0
         
         if "1." in pa_tinh:
             z_design = st.number_input("Nhập giá trị cao độ thiết kế (m):", value=0.0)
-            boundary_mode = st.selectbox("Lựa chọn hình thức ranh:", ["Mặt bằng hiện hữu", "Ranh giới ấn định"])
+            boundary_mode = st.selectbox("Lựa chọn hình thức ranh:", ["Mặt bằng hiện hữu", "Ranh giới ấn định"], key="bm_mode_1")
             if boundary_mode == "Ranh giới ấn định":
                 file_ranh = st.file_uploader("Tải file Ranh giới ấn định ngoài:", type=["txt", "csv", "dxf"], key="ranh_ad_1")
                 if file_ranh is not None:
@@ -81,7 +82,7 @@ elif "BƯỚC 2" in step:
                     st.session_state.bm2_df = df_b2_normalized
                     st.success("Đã nạp số liệu Bề mặt 2 thành công.")
                     
-            boundary_mode = st.selectbox("Lựa chọn hình thức ranh:", ["Mặt bằng hiện hữu", "Ranh giới ấn định", "Tổng hợp Bề mặt 1&2", "Xác định riêng Bề mặt 1,2"])
+            boundary_mode = st.selectbox("Lựa chọn hình thức ranh:", ["Mặt bằng hiện hữu", "Ranh giới ấn định", "Tổng hợp Bề mặt 1&2", "Xác định riêng Bề mặt 1,2"], key="bm_mode_2")
             if boundary_mode == "Ranh giới ấn định":
                 file_ranh = st.file_uploader("Tải file Ranh giới ấn định ngoài:", type=["txt", "csv", "dxf"], key="ranh_ad_2")
                 if file_ranh is not None:
@@ -118,7 +119,7 @@ elif "BƯỚC 2" in step:
         elif boundary_mode == "Tổng hợp Bề mặt 1&2" and st.session_state.bm2_df is not None:
             bm2_pts = st.session_state.bm2_df[['X', 'Y']].values
             hull_white = compute_convex_hull(np.vstack([bm1_pts, bm2_pts]))
-            fig.add_trace(go.Scatter3d(x=hull_white[:, 0], y=hull_white[:, 1], z=np.full(len(hull_white), min(z_min_g, st.session_state.bm2_df['Z'].min())), mode='lines', line=dict(color='white', width=4), name='⚪ Ranh tổng hợp'))
+            fig.add_trace(go.Scatter3d(x=hull_white[:, 0], y=hull_white[:, 1], z=np.full(len(hull_white), min(z_min_g, st.session_state.bm2_df['Z'].min())), mode='lines', line=dict(color='orange', width=4), name='⚪ Ranh tổng hợp'))
         elif boundary_mode == "Xác định riêng Bề mặt 1,2" and st.session_state.bm2_df is not None:
             bm2_pts = st.session_state.bm2_df[['X', 'Y']].values
             hull_b2 = compute_convex_hull(bm2_pts)
@@ -131,10 +132,12 @@ elif "BƯỚC 2" in step:
             x_m = np.linspace(st.session_state.bm1_df['X'].min(), st.session_state.bm1_df['X'].max(), 2)
             y_m = np.linspace(st.session_state.bm1_df['Y'].min(), st.session_state.bm1_df['Y'].max(), 2)
             X_g, Y_g = np.meshgrid(x_m, y_m)
-            fig.add_trace(go.Surface(x=X_g, y=Y_g, z=np.full(X_g.shape, z_design), opacity=0.25, colorscale='Reds', showscale=False, name='Thiết kế'))
+            fig.add_trace(go.Surface(x=X_g, y=Y_g, z=np.full(X_g.shape, z_design), opacity=0.25, showscale=False, name='Thiết kế'))
 
+        # Khắc phục triệt để ValueError: Loại bỏ hoàn toàn thuộc tính template="plotly_dark" gây lỗi trên Python 3.14
         fig.update_layout(
-            template="plotly_dark",
+            paper_bgcolor='rgba(0,0,0,0)', # Trong suốt nền canvas để tiệp với giao diện nền tối của Streamlit
+            plot_bgcolor='rgba(0,0,0,0)',
             scene=dict(
                 xaxis=dict(title='X', titlefont=dict(size=10), tickfont=dict(size=8)),
                 yaxis=dict(title='Y', titlefont=dict(size=10), tickfont=dict(size=8)),
@@ -145,7 +148,3 @@ elif "BƯỚC 2" in step:
             height=430,
             legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5, font=dict(size=9))
         )
-        st.plotly_chart(fig, use_container_width=True, config={'responsive': True})
-else:
-    st.header("🧱 Phân rã cấu trúc các module tiếp theo (Bước 3 - 5)")
-    st.write("Khu vực phát triển thuật toán lưới ô vuông trắc địa và xuất báo cáo khối lượng đào đắp.")
