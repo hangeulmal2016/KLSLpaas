@@ -12,7 +12,7 @@ if 'bm1_df' not in st.session_state: st.session_state.bm1_df = None
 if 'bm2_df' not in st.session_state: st.session_state.bm2_df = None
 if 'ranh_an_dinh_df' not in st.session_state: st.session_state.ranh_an_dinh_df = None
 
-st.sidebar.header("📌 QUY TRÌNH THỰC HIỆN")
+st.sidebar.header("📌 QUY TRÌCH THỰC HIỆN")
 step = st.sidebar.radio("Chọn bước ứng dụng:", [
     "🔥 [BƯỚC 1] Xác lập bề mặt tính toán 1",
     "🗺️ [BƯỚC 2] Xây dựng Boundary tổng quát",
@@ -109,14 +109,16 @@ elif "BƯỚC 2" in step:
             fig_fc.add_trace(go.Scatter(x=hull_b1[:, 0], y=hull_b1[:, 1], mode='lines+markers', line=dict(color='green', width=3), name='🟢 Ranh BM1'))
             fig_fc.add_trace(go.Scatter(x=compute_convex_hull(st.session_state.bm2_df[['X', 'Y']].values)[:, 0], y=compute_convex_hull(st.session_state.bm2_df[['X', 'Y']].values)[:, 1], mode='lines+markers', line=dict(color='blue', width=3), name='🔵 Ranh BM2'))
             
-        fig_fc.update_layout(margin=dict(l=10, r=10, b=10, t=10), height=350, xaxis=dict(showgrid=True), yaxis=dict(showgrid=True, scaleanchor="x", scaleratio=1), clickmode='event+select', selectionmode='points')
+        # FIX TRIỆT ĐỂ PYTHON 3.14: Loại bỏ hoàn toàn selectionmode='points' lỗi thời
+        fig_fc.update_layout(margin=dict(l=10, r=10, b=10, t=10), height=350, xaxis=dict(showgrid=True), yaxis=dict(showgrid=True, scaleanchor="x", scaleratio=1), clickmode='event')
         selected_point = st.plotly_chart(fig_fc, use_container_width=True, config={'responsive': True}, key="chart_focus", on_select="rerun")
         
         highlight_x, highlight_y = None, None
         if selected_point and "selection" in selected_point and "points" in selected_point["selection"] and len(selected_point["selection"]["points"]) > 0:
-            highlight_x = selected_point["selection"]["points"].get("x")
-            highlight_y = selected_point["selection"]["points"].get("y")
-            st.toast(f"🎯 Định vị đỉnh ranh: X={highlight_x:.2f}, Y={highlight_y:.2f}", icon="📍")
+            pts_data = selected_point["selection"]["points"]
+            highlight_x = pts_data[0].get("x") if isinstance(pts_data, list) else pts_data.get("x")
+            highlight_y = pts_data[0].get("y") if isinstance(pts_data, list) else pts_data.get("y")
+            if highlight_x is not None: st.toast(f"🎯 Định vị đỉnh ranh: X={highlight_x:.2f}, Y={highlight_y:.2f}", icon="📍")
 
         st.markdown("#### 🌐 Khung 1: Overview (Địa hình 3D)")
         fig_ov = go.Figure()
