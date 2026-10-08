@@ -93,32 +93,91 @@ elif "BƯỚC 2" in step:
                 if file_ranh is not None:
                     st.session_state.ranh_an_dinh_df = process_surface_upload(file_ranh, "rad2")
 
-        st.subheader("📊 [KẾT THÚC] Trực quan không gian 3D & Màu sắc Boundary")
+                # ==================== KHUNG HIỂN THỊ OVERVIEW MỚI ====================
+        st.subheader("📊 Khung Tổng Quan Hệ Thống Boundary (Overview)")
+        
+        # Tính toán trước số liệu cho các Boundary
         bm1_pts = st.session_state.bm1_df[['X', 'Y']].values
         hull_b1 = compute_convex_hull(bm1_pts)
+        len_b1 = len(hull_b1) - 1
+        
+        # Khởi tạo các biến số liệu động cho các ranh giới còn lại
+        len_rad = 0
+        if st.session_state.ranh_an_dinh_df is not None:
+            len_rad = len(compute_convex_hull(st.session_state.ranh_an_dinh_df[['X', 'Y']].values)) - 1
+            
+        len_b2 = 0
+        if st.session_state.bm2_df is not None:
+            len_b2 = len(compute_convex_hull(st.session_state.bm2_df[['X', 'Y']].values)) - 1
+            
+        len_white = 0
+        if st.session_state.bm2_df is not None:
+            bm2_pts = st.session_state.bm2_df[['X', 'Y']].values
+            len_white = len(compute_convex_hull(np.vstack([bm1_pts, bm2_pts]))) - 1
+
+        # Chia giao diện thành 4 cột đại diện cho 4 Boundary
+        ov_c1, ov_c2, ov_c3, ov_c4 = st.columns(4)
+        
+        with ov_c1:
+            st.markdown("### 🔴 Ranh ấn định")
+            if st.session_state.ranh_an_dinh_df is not None:
+                st.metric(label="Số lượng đỉnh ranh", value=f"{len_rad} Pts", delta="Đã nạp file ngoài", delta_color="normal")
+            else:
+                st.metric(label="Số lượng đỉnh ranh", value="0 Pts", delta="Chưa cấu hình", delta_color="inverse")
+                st.caption("Phương thức: File thiết kế độc lập")
+                
+        with ov_c2:
+            st.markdown("### 🟢 Ranh Bề mặt 1")
+            st.metric(label="Số lượng đỉnh ranh", value=f"{len_b1} Pts", delta="Sẵn sàng tính toán", delta_color="normal")
+            st.caption("Phương thức: Convex Hull (Hiện hữu)")
+            
+        with ov_c3:
+            st.markdown("### 🔵 Ranh Bề mặt 2")
+            if st.session_state.bm2_df is not None:
+                st.metric(label="Số lượng đỉnh ranh", value=f"{len_b2} Pts", delta="Sẵn sàng tính toán", delta_color="normal")
+            else:
+                st.metric(label="Số lượng đỉnh ranh", value="0 Pts", delta="Chưa cấu hình", delta_color="inverse")
+                st.caption("Phương thức: Convex Hull (Cơ sở)")
+                
+        with ov_c4:
+            st.markdown("### ⚪ Ranh Tổng hợp")
+            if st.session_state.bm2_df is not None:
+                st.metric(label="Số lượng đỉnh ranh", value=f"{len_white} Pts", delta="Hợp nhất thành công", delta_color="normal")
+            else:
+                st.metric(label="Số lượng đỉnh ranh", value="0 Pts", delta="Chờ Bề mặt 2", delta_color="off")
+                st.caption("Phương thức: Hợp nhất tập điểm 1&2")
+
+        st.markdown("---")
+        st.subheader("🌐 Không gian mô phỏng hình học 3D")
+
+        # 3. Khởi tạo đồ thị 3D không gian
         z_min_g = st.session_state.bm1_df['Z'].min()
         fig = go.Figure()
         
-        # Vẽ tập điểm Bề mặt 1
+        # Điểm gốc Bề mặt 1
         fig.add_trace(go.Scatter3d(x=st.session_state.bm1_df['X'], y=st.session_state.bm1_df['Y'], z=st.session_state.bm1_df['Z'], mode='markers', marker=dict(size=3, color='cyan'), name='Điểm Mặt bằng 1'))
         
-        # Đổ màu ranh giới theo luật thiết kế
+        # Đổ màu ranh giới theo logic lựa chọn của người dùng
         if boundary_mode == "Mặt bằng hiện hữu":
             fig.add_trace(go.Scatter3d(x=hull_b1[:, 0], y=hull_b1[:, 1], z=np.full(len(hull_b1), z_min_g), mode='lines+markers', line=dict(color='green', width=5), name='🟢 Ranh BM1 (Green)'))
+            
         elif boundary_mode == "Ranh giới ấn định" and st.session_state.ranh_an_dinh_df is not None:
             rad_pts = st.session_state.ranh_an_dinh_df[['X', 'Y']].values
             hull_rad = compute_convex_hull(rad_pts)
             fig.add_trace(go.Scatter3d(x=hull_rad[:, 0], y=hull_rad[:, 1], z=np.full(len(hull_rad), z_min_g), mode='lines+markers', line=dict(color='red', width=5), name='🔴 Ranh ấn định (Red)'))
+            
         elif boundary_mode == "Tổng hợp Bề mặt 1&2" and st.session_state.bm2_df is not None:
             bm2_pts = st.session_state.bm2_df[['X', 'Y']].values
             hull_white = compute_convex_hull(np.vstack([bm1_pts, bm2_pts]))
             fig.add_trace(go.Scatter3d(x=hull_white[:, 0], y=hull_white[:, 1], z=np.full(len(hull_white), min(z_min_g, st.session_state.bm2_df['Z'].min())), mode='lines', line=dict(color='white', width=5), name='⚪ Ranh tổng hợp (White)'))
+            
         elif boundary_mode == "Xác định riêng Bề mặt 1,2" and st.session_state.bm2_df is not None:
             bm2_pts = st.session_state.bm2_df[['X', 'Y']].values
             hull_b2 = compute_convex_hull(bm2_pts)
             fig.add_trace(go.Scatter3d(x=hull_b1[:, 0], y=hull_b1[:, 1], z=np.full(len(hull_b1), z_min_g), mode='lines', line=dict(color='green', width=4), name='🟢 Ranh BM1 (Green)'))
             fig.add_trace(go.Scatter3d(x=hull_b2[:, 0], y=hull_b2[:, 1], z=np.full(len(hull_b2), st.session_state.bm2_df['Z'].min()), mode='lines', line=dict(color='blue', width=4), name='🔵 Ranh BM2 (Blue)'))
 
+        # Hiển thị dữ liệu nền phụ trợ (Mặt 2 hoặc cao độ thiết kế)
         if "2." in pa_tinh and st.session_state.bm2_df is not None:
             fig.add_trace(go.Scatter3d(x=st.session_state.bm2_df['X'], y=st.session_state.bm2_df['Y'], z=st.session_state.bm2_df['Z'], mode='markers', marker=dict(size=3, color='magenta'), name='Điểm Mặt bằng 2'))
         elif "1." in pa_tinh:
@@ -129,6 +188,3 @@ elif "BƯỚC 2" in step:
 
         fig.update_layout(template="plotly_dark", scene=dict(xaxis_title='X (m)', yaxis_title='Y (m)', zaxis_title='Z (m)', aspectmode='data'), margin=dict(l=0, r=0, b=0, t=30), height=650)
         st.plotly_chart(fig, use_container_width=True)
-else:
-    st.header("🧱 Phân rã cấu trúc các module tiếp theo (Bước 3 - 5)")
-    st.write("Khu vực phát triển thuật toán lưới ô vuông trắc địa và xuất báo cáo khối lượng.")
