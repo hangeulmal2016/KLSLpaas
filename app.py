@@ -8,6 +8,7 @@ st.set_page_config(page_title="Web App Trắc Địa PA1", page_icon="📐", lay
 st.title("📐 Web App Xử lý Số liệu Trắc địa (Phương án 1)")
 st.caption("Giải pháp: Python + Streamlit | Render đồ thị: Plotly 3D Đèn nền Tối trên Client")
 
+# Khởi tạo bộ nhớ phiên làm việc
 if 'bm1_df' not in st.session_state: st.session_state.bm1_df = None
 if 'bm2_df' not in st.session_state: st.session_state.bm2_df = None
 if 'ranh_an_dinh_df' not in st.session_state: st.session_state.ranh_an_dinh_df = None
@@ -49,6 +50,7 @@ if "BƯỚC 1" in step:
     if file_b1 is not None:
         df_normalized = process_surface_upload(file_b1, "b1")
         if df_normalized is not None:
+            st.write("📊 **Xem trước dữ liệu mẫu Bề mặt 1 đã chuẩn hóa:**")
             st.dataframe(df_normalized.head(10), use_container_width=True)
             if st.button("💾 Cập nhật tập điểm Bề mặt 1"):
                 st.session_state.bm1_df = df_normalized
@@ -73,8 +75,19 @@ elif "BƯỚC 2" in step:
             st.subheader("📍 Xác lập Bề mặt cơ sở (Bề mặt 2)")
             file_b2 = st.file_uploader("Tải file Mặt bằng cơ sở 2:", type=["txt", "csv", "dxf"], key="upload_b2")
             if file_b2 is not None:
-                st.session_state.bm2_df = process_surface_upload(file_b2, "b2")
-            boundary_mode = st.selectbox("Lựa chọn hình thức xác định ranh:", ["Mặt bằng hiện hữu", "Ranh giới ấn định", "Tổng hợp Bề mặt 1&2", "Xác định riêng Bề mặt 1,2"])
+                df_b2_normalized = process_surface_upload(file_b2, "b2")
+                if df_b2_normalized is not None:
+                    st.write("📊 **Xem trước dữ liệu mẫu Bề mặt 2 đã chuẩn hóa:**")
+                    st.dataframe(df_b2_normalized.head(10), use_container_width=True)
+                    st.session_state.bm2_df = df_b2_normalized
+                    st.success("Đã nạp số liệu Bề mặt 2 thành công.")
+                    
+            boundary_mode = st.selectbox("Lựa chọn hình thức xác định ranh:", [
+                "Mặt bằng hiện hữu", 
+                "Ranh giới ấn định", 
+                "Tổng hợp Bề mặt 1&2", 
+                "Xác định riêng Bề mặt 1,2"
+            ])
             if boundary_mode == "Ranh giới ấn định":
                 file_ranh = st.file_uploader("Tải file Ranh giới ấn định ngoài:", type=["txt", "csv", "dxf"], key="ranh_ad_2")
                 if file_ranh is not None:
@@ -86,8 +99,10 @@ elif "BƯỚC 2" in step:
         z_min_g = st.session_state.bm1_df['Z'].min()
         fig = go.Figure()
         
+        # Vẽ tập điểm Bề mặt 1
         fig.add_trace(go.Scatter3d(x=st.session_state.bm1_df['X'], y=st.session_state.bm1_df['Y'], z=st.session_state.bm1_df['Z'], mode='markers', marker=dict(size=3, color='cyan'), name='Điểm Mặt bằng 1'))
         
+        # Đổ màu ranh giới theo luật thiết kế
         if boundary_mode == "Mặt bằng hiện hữu":
             fig.add_trace(go.Scatter3d(x=hull_b1[:, 0], y=hull_b1[:, 1], z=np.full(len(hull_b1), z_min_g), mode='lines+markers', line=dict(color='green', width=5), name='🟢 Ranh BM1 (Green)'))
         elif boundary_mode == "Ranh giới ấn định" and st.session_state.ranh_an_dinh_df is not None:
