@@ -2,17 +2,17 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from utils import parse_txt_to_df, parse_dxf_to_df, detect_crs_and_headings, compute_convex_hull
+from utils import parse_txt_to_df, parse_dxf_to_df, detect_crs_and_headings, compute_convex_hull, export_dxf_bytes
 
-st.set_page_config(page_title="Web App Trắc Địa Mobile", page_icon="📐", layout="wide")
+st.set_page_config(page_title="Web App Trắc Địa", page_icon="📐", layout="wide")
 st.title("📐 Web App Xử lý Số liệu Trắc địa")
-st.caption("Phương án 1 | Tối ưu hóa giao diện tương tác đồng bộ chéo Focus & Overview")
+st.caption("Phương án 1 | Tích hợp xuất file DXF mã màu và tương tác đa khung Focus & Overview")
 
 if 'bm1_df' not in st.session_state: st.session_state.bm1_df = None
 if 'bm2_df' not in st.session_state: st.session_state.bm2_df = None
 if 'ranh_an_dinh_df' not in st.session_state: st.session_state.ranh_an_dinh_df = None
 
-st.sidebar.header("📌 QUY TRÌCH THỰC HIỆN")
+st.sidebar.header("📌 QUY TRÌNH THỰC HIỆN")
 step = st.sidebar.radio("Chọn bước ứng dụng:", [
     "🔥 [BƯỚC 1] Xác lập bề mặt tính toán 1",
     "🗺️ [BƯỚC 2] Xây dựng Boundary tổng quát",
@@ -40,16 +40,21 @@ def process_surface_upload(uploaded_file, key_prefix):
         return df_proc[['ID', 'X', 'Y', 'Z']]
     return None
 if "BƯỚC 1" in step:
-    st.header("⚙️ [BƯỚC 1] Xác lập Bề mặt 1")
+    st.header("⚙️ [BƯỚC 1] Xác lập Bề mặt tính toán (Bề mặt 1)")
     file_b1 = st.file_uploader("Tải file Mặt bằng hiện hữu (DXF/TXT/CSV):", type=["txt", "csv", "dxf"], key="upload_b1")
     if file_b1 is not None:
         df_normalized = process_surface_upload(file_b1, "b1")
         if df_normalized is not None:
-            st.write("📊 Xem trước dữ liệu mẫu Bề mặt 1:")
+            st.write("📊 Dữ liệu mẫu Bề mặt 1 đã chuẩn hóa:")
             st.dataframe(df_normalized.head(10), use_container_width=True)
             if st.button("💾 Cập nhật tập điểm Bề mặt 1"):
                 st.session_state.bm1_df = df_normalized
                 st.success("Đã lưu tập điểm Bề mặt 1 thành công!")
+                
+            if st.session_state.bm1_df is not None:
+                hull_b1_3d = np.hstack([compute_convex_hull(st.session_state.bm1_df[['X', 'Y']].values), np.full((len(compute_convex_hull(st.session_state.bm1_df[['X', 'Y']].values)), 1), st.session_state.bm1_df['Z'].min())])
+                dxf_b1 = export_dxf_bytes({"BEMAT_1": {"points": st.session_state.bm1_df, "boundary": hull_b1_3d, "color_idx": 3}})
+                st.download_button("📥 Xuất file DXF Bề mặt 1 (Boundary Green)", data=dxf_b1, file_name="Bemat1_Boundary_Green.dxf", mime="application/dxf")
 
 elif "BƯỚC 2" in step:
     st.header("🗺️ [BƯỚC 2] Xây dựng Boundary tổng quát")
@@ -71,7 +76,6 @@ elif "BƯỚC 2" in step:
             if file_b2 is not None:
                 df_b2_normalized = process_surface_upload(file_b2, "b2")
                 if df_b2_normalized is not None:
-                    st.write("📊 Xem trước dữ liệu mẫu Bề mặt 2:")
                     st.dataframe(df_b2_normalized.head(10), use_container_width=True)
                     st.session_state.bm2_df = df_b2_normalized
                     st.success("Đã nạp số liệu Bề mặt 2 thành công.")
@@ -88,54 +92,65 @@ elif "BƯỚC 2" in step:
         len_white = len(compute_convex_hull(np.vstack([bm1_pts, st.session_state.bm2_df[['X', 'Y']].values]))) - 1 if st.session_state.bm2_df is not None else 0
 
         ov_c1, ov_c2, ov_c3, ov_c4 = st.columns(4)
-        with ov_c1: st.metric(label="🔴 Ranh ấn định", value=f"{len_rad} Đỉnh", delta="Sẵn sàng" if len_rad > 0 else "Trống", delta_color="normal" if len_rad > 0 else "inverse")
-        with ov_c2: st.metric(label="🟢 Ranh Bề mặt 1", value=f"{len_b1} Đỉnh", delta="Sẵn sàng")
-        with ov_c3: st.metric(label="🔵 Ranh Bề mặt 2", value=f"{len_b2} Đỉnh", delta="Sẵn sàng" if len_b2 > 0 else "Trống", delta_color="normal" if len_b2 > 0 else "inverse")
-        with ov_c4: st.metric(label="⚪ Ranh Tổng hợp", value=f"{len_white} Đỉnh", delta="Hợp nhất" if len_white > 0 else "Chờ BM2", delta_color="normal" if len_white > 0 else "off")
+        with ov_c1: st.metric(label="🔴 Ranh ấn định", value=f"{len_rad} Đỉnh", delta="Red Layer")
+        with ov_c2: st.metric(label="🟢 Ranh Bề mặt 1", value=f"{len_b1} Đỉnh", delta="Green Layer")
+        with ov_c3: st.metric(label="🔵 Ranh Bề mặt 2", value=f"{len_b2} Đỉnh", delta="Blue Layer")
+        with ov_c4: st.metric(label="⚪ Ranh Tổng hợp", value=f"{len_white} Đỉnh", delta="White Layer")
 
         st.markdown("---")
         st.subheader("🏁 [KẾT THÚC] Chế độ hiển thị Boundary")
         st.markdown("#### 🎯 Khung 2: Focus (Chọn đỉnh ranh trên đồ thị để định vị không gian)")
         fig_fc = go.Figure()
         if boundary_mode == "Mặt bằng hiện hữu":
-            fig_fc.add_trace(go.Scatter(x=hull_b1[:, 0], y=hull_b1[:, 1], mode='lines+markers', line=dict(color='green', width=4), name='🟢 Ranh BM1'))
+            fig_fc.add_trace(go.Scatter(x=hull_b1[:, 0], y=hull_b1[:, 1], mode='lines+markers', line=dict(color='green', width=4), name='🟢 Ranh BM1 (Green)'))
         elif boundary_mode == "Ranh giới ấn định" and st.session_state.ranh_an_dinh_df is not None:
             rad_pts = st.session_state.ranh_an_dinh_df[['X', 'Y']].values
-            fig_fc.add_trace(go.Scatter(x=compute_convex_hull(rad_pts)[:, 0], y=compute_convex_hull(rad_pts)[:, 1], mode='lines+markers', line=dict(color='red', width=4), name='🔴 Ranh ấn định'))
+            fig_fc.add_trace(go.Scatter(x=compute_convex_hull(rad_pts)[:, 0], y=compute_convex_hull(rad_pts)[:, 1], mode='lines+markers', line=dict(color='red', width=4), name='🔴 Ranh ấn định (Red)'))
         elif boundary_mode == "Tổng hợp Bề mặt 1&2" and st.session_state.bm2_df is not None:
             hull_white = compute_convex_hull(np.vstack([bm1_pts, st.session_state.bm2_df[['X', 'Y']].values]))
-            fig_fc.add_trace(go.Scatter(x=hull_white[:, 0], y=hull_white[:, 1], mode='lines+markers', line=dict(color='white', width=4), name='⚪ Ranh tổng hợp'))
+            fig_fc.add_trace(go.Scatter(x=hull_white[:, 0], y=hull_white[:, 1], mode='lines+markers', line=dict(color='white', width=4), name='⚪ Ranh tổng hợp (White)'))
         elif boundary_mode == "Xác định riêng Bề mặt 1,2" and st.session_state.bm2_df is not None:
             fig_fc.add_trace(go.Scatter(x=hull_b1[:, 0], y=hull_b1[:, 1], mode='lines+markers', line=dict(color='green', width=3), name='🟢 Ranh BM1'))
             fig_fc.add_trace(go.Scatter(x=compute_convex_hull(st.session_state.bm2_df[['X', 'Y']].values)[:, 0], y=compute_convex_hull(st.session_state.bm2_df[['X', 'Y']].values)[:, 1], mode='lines+markers', line=dict(color='blue', width=3), name='🔵 Ranh BM2'))
             
-        # FIX TRIỆT ĐỂ PYTHON 3.14: Loại bỏ hoàn toàn selectionmode='points' lỗi thời
         fig_fc.update_layout(margin=dict(l=10, r=10, b=10, t=10), height=350, xaxis=dict(showgrid=True), yaxis=dict(showgrid=True, scaleanchor="x", scaleratio=1), clickmode='event')
         selected_point = st.plotly_chart(fig_fc, use_container_width=True, config={'responsive': True}, key="chart_focus", on_select="rerun")
         
         highlight_x, highlight_y = None, None
         if selected_point and "selection" in selected_point and "points" in selected_point["selection"] and len(selected_point["selection"]["points"]) > 0:
             pts_data = selected_point["selection"]["points"]
-            highlight_x = pts_data[0].get("x") if isinstance(pts_data, list) else pts_data.get("x")
-            highlight_y = pts_data[0].get("y") if isinstance(pts_data, list) else pts_data.get("y")
+            highlight_x = pts_data.get("x")
+            highlight_y = pts_data.get("y")
             if highlight_x is not None: st.toast(f"🎯 Định vị đỉnh ranh: X={highlight_x:.2f}, Y={highlight_y:.2f}", icon="📍")
 
         st.markdown("#### 🌐 Khung 1: Overview (Địa hình 3D)")
         fig_ov = go.Figure()
+        z_m1 = st.session_state.bm1_df['Z'].min()
         fig_ov.add_trace(go.Scatter3d(x=st.session_state.bm1_df['X'], y=st.session_state.bm1_df['Y'], z=st.session_state.bm1_df['Z'], mode='markers', marker=dict(size=2, color='cyan', opacity=0.8)))
         if "2." in pa_tinh and st.session_state.bm2_df is not None:
             fig_ov.add_trace(go.Scatter3d(x=st.session_state.bm2_df['X'], y=st.session_state.bm2_df['Y'], z=st.session_state.bm2_df['Z'], mode='markers', marker=dict(size=2, color='magenta', opacity=0.8)))
-        elif "1." in pa_tinh:
-            x_m = np.linspace(st.session_state.bm1_df['X'].min(), st.session_state.bm1_df['X'].max(), 2)
-            y_m = np.linspace(st.session_state.bm1_df['Y'].min(), st.session_state.bm1_df['Y'].max(), 2)
-            X_g, Y_g = np.meshgrid(x_m, y_m)
-            fig_ov.add_trace(go.Surface(x=X_g, y=Y_g, z=np.full(X_g.shape, z_design), opacity=0.25, showscale=False))
         if highlight_x is not None and highlight_y is not None:
-            fig_ov.add_trace(go.Scatter3d(x=[highlight_x], y=[highlight_y], z=[st.session_state.bm1_df['Z'].mean()], mode='markers', marker=dict(size=8, color='yellow', symbol='diamond', line=dict(color='red', width=2))))
+            fig_ov.add_trace(go.Scatter3d(x=[highlight_x], y=[highlight_y], z=[st.session_state.bm1_df['Z'].mean()], mode='markers', marker=dict(size=8, color='yellow', symbol='diamond')))
             
         fig_ov.update_layout(margin=dict(l=0, r=0, b=0, t=10), height=350, showlegend=False)
         st.plotly_chart(fig_ov, use_container_width=True, config={'responsive': True}, key="chart_overview")
-        st.markdown("**Ghi chú màu sắc:** 🟢 Xanh lá: *Ranh BM1* | 🔵 Xanh dương: *Ranh BM2* | ⚪ Trắng: *Ranh tổng hợp* | 🔴 Đỏ: *Ranh ấn định ngoài*")
+        
+        # --- BƯỚC 5: XUẤT BÁO CÁO DXF TỔNG HỢP THEO MÃ MÀU QUY CHUẨN ---
+        st.markdown("### 💾 [BƯỚC 5] Xuất báo cáo bản vẽ kỹ thuật")
+        layers_config = {}
+        layers_config["BEMAT_1"] = {"points": st.session_state.bm1_df, "boundary": np.hstack([hull_b1, np.full((len(hull_b1), 1), z_m1)]), "color_idx": 3} # Green
+        if st.session_state.bm2_df is not None:
+            h_b2 = compute_convex_hull(st.session_state.bm2_df[['X', 'Y']].values)
+            layers_config["BEMAT_2"] = {"points": st.session_state.bm2_df, "boundary": np.hstack([h_b2, np.full((len(h_b2), 1), st.session_state.bm2_df['Z'].min())]), "color_idx": 5} # Blue
+        if st.session_state.ranh_an_dinh_df is not None:
+            h_rad = compute_convex_hull(st.session_state.ranh_an_dinh_df[['X', 'Y']].values)
+            layers_config["RANH_AN_DINH"] = {"points": st.session_state.ranh_an_dinh_df, "boundary": np.hstack([h_rad, np.full((len(h_rad), 1), z_m1)]), "color_idx": 1} # Red
+        if st.session_state.bm2_df is not None and boundary_mode == "Tổng hợp Bề mặt 1&2":
+            h_wh = compute_convex_hull(np.vstack([bm1_pts, st.session_state.bm2_df[['X', 'Y']].values]))
+            layers_config["RANH_TONG_HOP"] = {"points": None, "boundary": np.hstack([h_wh, np.full((len(h_wh), 1), min(z_m1, st.session_state.bm2_df['Z'].min()))]), "color_idx": 7} # White
+            
+        dxf_final = export_dxf_bytes(layers_config)
+        st.download_button("📥 Tải bản vẽ tổng hợp DXF (Full Layers & Colors)", data=dxf_final, file_name="BaoCao_TracDia_TongHop.dxf", mime="application/dxf")
 else:
-    st.header("🧱 Phân rã cấu trúc các module tiếp theo (Bước 3 - 5)")
-    st.write("Khu vực phát triển thuật toán lưới ô vuông trắc địa và xuất báo cáo khối lượng đào đắp.")
+    st.header("🧱 Phân rã cấu trúc các module tiếp theo (Bước 3 - 4)")
+    st.write("Khu vực phát triển tiếp thuật toán lưới ô vuông trắc địa tính toán khối lượng đào đắp.")
