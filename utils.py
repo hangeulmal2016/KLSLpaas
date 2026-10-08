@@ -14,7 +14,10 @@ def parse_txt_to_df(uploaded_file):
     lines = content.strip().split('\n')
     sep = ',' if ',' in content else ('\t' if '\t' in content else r'\s+')
     uploaded_file.seek(0)
-    df = pd.read_csv(uploaded_file, sep=sep, header=None if not lines[0].replace('.', '', 1).replace('-', '', 1).replace(' ', '', 1).isdigit() else 'infer')
+    
+    # Kiểm tra dòng đầu có chứa chữ (header) hay không để xử lý tự động
+    is_header = not lines[0].replace('.', '', 1).replace('-', '', 1).replace(' ', '', 1).replace(',', '', 1).replace('\t', '', 1).strip().isdigit()
+    df = pd.read_csv(uploaded_file, sep=sep, header=0 if is_header else None)
     return df
 
 def parse_dxf_to_df(uploaded_file):
