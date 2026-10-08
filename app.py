@@ -102,7 +102,7 @@ if step == "[BƯỚC 1] Xác lập Bề mặt 1":
             suggestions = suggest_headings(df_raw.columns)
             
             st.markdown("##### ⚙️ Phân lập & Xác nhận dữ liệu thủ công từ kỹ sư:")
-            c1, c2 = st.columns()
+            c1, c2 = st.columns(2)
             with c1:
                 crs_list = ["VN2000", "WGS84", "Tọa độ giả định"]
                 selected_crs = st.selectbox("Hệ tọa độ dữ liệu:", crs_list, index=crs_list.index(auto_crs))
