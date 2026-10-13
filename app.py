@@ -49,233 +49,6 @@ def interpolate_z(x, y, surf_df):
 # Tính diện tích hình chiếu 2D của tam giác từ tọa độ đỉnh phẳng
 def tri_area_2d(p1, p2, p3):
     return 0.5 * abs(p1[0]*(p2[1] - p3[1]) + p2[0]*(p3[1] - p1[1]) + p3[0]*(p1[1] - p2[1]))
-          v_y.extend([float(p1_node['Y']), float(p2_node['Y']), float(p1_node['Y']), float(p2_node['Y'])])
-                v_z.extend([float(p1_node['Z']), float(p2_node['Z']), float(z1_base[0]), float(z2_base[0])])
-                
-                i_idx.extend([p_count, p_count+1, p_count+1])
-                j_idx.extend([p_count+1, p_count+2, p_count+2])
-                k_idx.extend([p_count+2, p_count, p_count+3])
-                p_count += 4
-                
-        if p_count > 0:
-            fig.add_trace(go.Mesh3d(x=v_x, y=v_y, z=v_z, i=i_idx, j=j_idx, k=k_idx, color='crimson', name='Vertical Side Surface', opacity=0.85))
-            skirt_z = [z * 1.01 if z > 0 else z * 0.99 for z in v_z]
-            fig.add_trace(go.Mesh3d(x=v_x, y=v_y, z=skirt_z, i=i_idx, j=j_idx, k=k_idx, color='darkorange', name='Mesh Skirt (Mái dốc biên)', opacity=0.7))
-
-        bbox_x = [min_x, max_x, max_x, min_x, min_x]
-        bbox_y = [min_y, min_y, max_y, max_y, min_y]
-        bbox_z = [float(max(points1['Z'].max(), points2['Z'].max()) + 1.0)] * 5
-        
-        fig.add_trace(go.Scatter3d(x=bbox_x, y=bbox_y, z=bbox_z, mode='lines', line=dict(color='black', width=5), name='Ranh giới BBorder trực giao'))
-        fig.update_layout(scene=dict(xaxis_title='Easting (X)', yaxis_title='Northing (Y)', zaxis_title='Cao độ H (Z)'), margin=dict(l=0, r=0, b=0, t=30), height=650)
-        st.plotly_chart(fig, use_container_width=True)
-else:
-    st.info("💡 Hệ thống đang đợi bạn tải các tệp trắc địa bề mặt lên bảng điều khiển bên trái để phân tích hình học.")
-        
-with col2:
-    st.subheader("Bề mặt 2 (Cơ sở)")
-    file2 = st.file_uploader("Tải lên Bề mặt 2 (.txt/.csv)", type=['txt', 'csv'], key="u2")
-    if file2:
-        st.session_state.sf2_raw = parse_txt_file(file2)
-        if st.session_state.sf2_raw is not None:
-            st.write("Xem trước dữ liệu thô BM2:")
-            st.dataframe(st.session_state.sf2_raw.head(3))
-            
-            crs2 = st.selectbox("Hệ tọa độ BM2", ["VN-2000", "WGS84", "Tọa độ giả định"], key="crs2")
-            cols = list(st.session_state.sf2_raw.columns)
-            col_x2 = st.selectbox("Cột chứa tọa độ East (X)", cols, index=0 if len(cols)>0 else 0, key="x2")
-            col_y2 = st.selectbox("Cột chứa tọa độ North (Y)", cols, index=1 if len(cols)>1 else 0, key="y2")
-            col_z2 = st.selectbox("Cột chứa cao độ H (Z)", cols, index=2 if len(cols)>2 else 0, key="z2")
-            col_id2 = st.selectbox("Cột chứa ID (Nếu có)", ["Không có / Tạo mới"] + cols, key="id2")
-            
-            if st.button("Xác nhận & Cập nhật BM2"):
-                df_clean = pd.DataFrame({
-                    'X': pd.to_numeric(st.session_state.sf2_raw[col_x2], errors='coerce'),
-                    'Y': pd.to_numeric(st.session_state.sf2_raw[col_y2], errors='coerce'),
-                    'Z': pd.to_numeric(st.session_state.sf2_raw[col_z2], errors='coerce')
-                }).dropna()
-                if col_id2 == "Không có / Tạo mới":
-                    df_clean['ID'] = range(1, len(df_clean) + 1)
-                else:
-                    df_clean['ID'] = st.session_state.sf2_raw[col_id2]
-                st.session_state.sf2_clean = df_clean
-                st.success("Đã chuẩn hóa thành công Bề mặt 2!")
-                # =========================================================================
-# XỬ LÝ HÌNH HỌC KHÔNG GIAN (BOUNDARY, TIN, PRISM METHOD)
-# =========================================================================
-if st.session_state.sf1_clean is not None and st.session_state.sf2_clean is not None:
-    st.header("2. Kết quả Tính toán & Phân tích")
-    
-    p1 = st.session_state.sf1_clean[['X', 'Y', 'Z']].values
-    p2 = st.session_state.sf2_clean[['X', 'Y', 'Z']].values
-    
-    # 1. Tạo Boundary bằng Convex Hull
-    hull1 = ConvexHull(p1[:, :2])
-    hull2 = ConvexHull(p2[:, :2])
-    
-    poly1 = Polygon(p1[hull1.vertices, :2])
-    poly2 = Polygon(p2[hull2.vertices, :2])
-    
-    # BBorder là phần giao (intersection)
-    bborder_poly = poly1.intersection(poly2)
-    
-    if bborder_poly.is_empty:
-        st.error("Hai bề mặt không có phần diện tích giao nhau (BBorder rỗng)!")
-    else:
-        # Lấy tọa độ đường biên ngoài BBorder
-        if bborder_poly.geom_type == 'Polygon':
-            bborder_coords = np.array(bborder_poly.exterior.coords)
-        else:
-            bborder_coords = np.array(bborder_poly.geoms[0].exterior.coords)
-            
-        # Lọc các điểm nằm trong vùng giao nhau BBorder
-        mask1 = [bborder_poly.contains(Polygon([(x,y)])) or bborder_poly.touches(Polygon([(x,y)])) for x, y in p1[:, :2]]
-        mask2 = [bborder_poly.contains(Polygon([(x,y)])) or bborder_poly.touches(Polygon([(x,y)])) for x, y in p2[:, :2]]
-        
-        p1_bb = p1[mask1] if np.sum(mask1) >= 3 else p1
-        p2_bb = p2[mask2] if np.sum(mask2) >= 3 else p2
-        
-        # Triangulation (TIN) cho vùng giao nhau
-        tin1 = Delaunay(p1_bb[:, :2])
-        tin2 = Delaunay(p2_bb[:, :2])
-        
-        # Hàm nội suy Z tuyến tính trên mặt tam giác
-        def interpolate_z(tri_p, x, y):
-            v0 = tri_p[1] - tri_p[0]
-            v1 = tri_p[2] - tri_p[0]
-            normal = np.cross(v0, v1)
-            if abs(normal[2]) < 1e-7: return tri_p[0][2]
-            d = -np.dot(normal, tri_p[0])
-            z = -(normal[0]*x + normal[1]*y + d) / normal[2]
-            return z
-
-        # Hàm tính toán Prism Method
-        def calculate_prism_volume(p_source, tin_source, p_target):
-            total_vol = 0.0
-            total_area = 0.0
-            for simp in tin_source.simplices:
-                pts = p_source[simp]
-                area2d = 0.5 * abs(pts[0][0]*(pts[1][1] - pts[2][1]) + pts[1][0]*(pts[2][1] - pts[0][1]) + pts[2][0]*(pts[0][1] - pts[1][1]))
-                
-                cx, cy = np.mean(pts[:, 0]), np.mean(pts[:, 1])
-                if not bborder_poly.contains(Polygon([(cx, cy)])):
-                    continue
-                
-                z_target = []
-                for pt in pts:
-                    idx = Delaunay(p_target[:, :2]).find_simplex(pt[:2])
-                    if idx >= 0:
-                        tri_target_pts = p_target[Delaunay(p_target[:, :2]).simplices[idx]]
-                        z_target.append(interpolate_z(tri_target_pts, pt[0], pt[1]))
-                    else:
-                        z_target.append(pt[2])
-                        
-                h = pts[:, 2] - np.array(z_target)
-                h_avg = np.mean(h)
-                total_vol += area2d * h_avg
-                total_area += area2d
-            return abs(total_vol), total_area
-
-        # Tính toán theo 2 phương án
-        vol_skirt, area_skirt = calculate_prism_volume(p1_bb, tin1, p2_bb)
-        vol_vss = vol_skirt * 1.015  # Sai lệch mô hình hóa sườn đứng
-        area_vss = bborder_poly.area
-        
-        # Báo cáo kết quả TXT
-        report_text = f"""==================================================
-BÁO CÁO KẾT QUẢ TÍNH TOÁN KHỐI LƯỢNG TRẮC ĐỊA
-==================================================
-Hệ tọa độ BM1: {crs1} | Hệ tọa độ BM2: {crs2}
-Diện tích vùng giao nhau BBorder: {bborder_poly.area:,.3f} m²
-
-PHƯƠNG ÁN 1: MESH SKIRT (Mô hình sườn tự do)
-- Diện tích tính toán: {area_skirt:,.3f} m²
-- Khối lượng tổng kết quả: {vol_skirt:,.3f} m³
-
-PHƯƠNG ÁN 2: VERTICAL SIDE SURFACE (Mặt đứng biên giao)
-- Diện tích hình chiếu biên: {area_vss:,.3f} m²
-- Khối lượng tổng kết quả: {vol_vss:,.3f} m³
-
-Độ lệch phương thức kiểm Civil3D: {abs(vol_skirt - vol_vss):,.3f} m³
-"""
-        st.text_area("Báo cáo Trích xuất (Định dạng TXT)", report_text, height=260)
-                # =========================================================================
-        # TRỰC QUAN HÓA PLOTLY 3D (RENDER TRÊN CLIENT)
-        # =========================================================================
-        st.subheader("3. Trực quan hóa Mô hình 3D Không gian (Plotly Client)")
-        fig = go.Figure()
-        
-        # Mesh Skirt (Màu Xanh lam)
-        fig.add_trace(go.Mesh3d(
-            x=p1_bb[:,0], y=p1_bb[:,1], z=p1_bb[:,2],
-            i=tin1.simplices[:,0], j=tin1.simplices[:,1], k=tin1.simplices[:,2],
-            color='deepskyblue', opacity=0.70, name='Mesh Skirt (BM1)', showscale=False
-        ))
-        
-        # Vertical Side Surface (Màu Cam)
-        fig.add_trace(go.Mesh3d(
-            x=p2_bb[:,0], y=p2_bb[:,1], z=p2_bb[:,2],
-            i=tin2.simplices[:,0], j=tin2.simplices[:,1], k=tin2.simplices[:,2],
-            color='coral', opacity=0.60, name='Vertical Side SF (BM2)', showscale=False
-        ))
-        
-        # Đường bao giao BBorder (Đỏ)
-        fig.add_trace(go.Scatter3d(
-            x=bborder_coords[:,0], y=bborder_coords[:,1], 
-            z=np.full(len(bborder_coords), np.mean(p1_bb[:,2])),
-            mode='lines', line=dict(color='darkred', width=5), name='Biên BBorder'
-        ))
-        
-        fig.update_layout(
-            scene=dict(xaxis_title='East (X)', yaxis_title='North (Y)', zaxis_title='Cao độ H (Z)', aspectmode='data'),
-            margin=dict(r=0, l=0, b=0, t=30), height=650
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-        # =========================================================================
-        # 4. XUẤT FILE DXF CHUẨN KỸ THUẬT (CAD)
-        # =========================================================================
-        st.subheader("4. Xuất File CAD Bản vẽ Bản quyền (.DXF)")
-        if st.button("Khởi tạo và Biên dịch cấu trúc DXF"):
-            doc = ezdxf.new('R2010')
-            msp = doc.modelspace()
-            
-            doc.layers.new(name='TIN_SURFACE_1', color=1)
-            doc.layers.new(name='TIN_SURFACE_2', color=2)
-            doc.layers.new(name='BBORDER', color=3)
-            doc.layers.new(name='SURVEY_POINTS_1', color=4)
-            doc.layers.new(name='SURVEY_POINTS_2', color=5)
-            
-            for simp in tin1.simplices:
-                msp.add_3dface([tuple(p1_bb[idx]) for idx in simp], dxfattribs={'layer': 'TIN_SURFACE_1'})
-                
-            for simp in tin2.simplices:
-                msp.add_3dface([tuple(p2_bb[idx]) for idx in simp], dxfattribs={'layer': 'TIN_SURFACE_2'})
-                
-            for i in range(len(bborder_coords)-1):
-                msp.add_line((bborder_coords[i][0], bborder_coords[i][1], 0), (bborder_coords[i+1][0], bborder_coords[i+1][1], 0), dxfattribs={'layer': 'BBORDER'})
-                
-            for _, r in st.session_state.sf1_clean.iterrows():
-                pt = (r['X'], r['Y'], r['Z'])
-                msp.add_point(pt, dxfattribs={'layer': 'SURVEY_POINTS_1'})
-                msp.add_text(f"H: {r['Z']:.2f}", dxfattribs={'layer': 'SURVEY_POINTS_1', 'height': 0.4}).set_placement(pt)
-                msp.add_text(f"No: {int(r['ID'])}", dxfattribs={'layer': 'SURVEY_POINTS_1', 'height': 0.2}).set_placement((r['X'], r['Y'] - 0.5, r['Z']))
-                
-            for _, r in st.session_state.sf2_clean.iterrows():
-                pt = (r['X'], r['Y'], r['Z'])
-                msp.add_point(pt, dxfattribs={'layer': 'SURVEY_POINTS_2'})
-                msp.add_text(f"ID: {int(r['ID'])}", dxfattribs={'layer': 'SURVEY_POINTS_2', 'height': 0.3}).set_placement(pt)
-                
-            out_stream = io.StringIO()
-            doc.write(out_stream)
-            st.download_button(
-                label="💾 Tải về bản vẽ DXF sản phẩm hoàn thiện",
-                data=out_stream.getvalue().encode('utf-8'),
-                file_name="TracDia_Surface_Output.dxf",
-                mime="application/dxf"
-            )
-else:
-    st.info("Vui lòng tải lên và xác nhận chuẩn hóa cấu trúc dữ liệu của cả 2 bề mặt để thực hiện chu trình phân tích hình học.")
     # --- GIAO DIỆN KHU VỰC TẢI DỮ LIỆU ---
 col_up1, col_up2 = st.columns(2)
 with col_up1:
@@ -328,7 +101,7 @@ if file1 and file2:
             df_cleaned['ID'] = df2_raw[id_col2].values if id_col2 != "Không có" else np.arange(1, len(df_cleaned) + 1)
             st.session_state['surf2_data'] = df_cleaned
             st.success("Đã đồng bộ thông số hình học BM2!")
-    # --- PHÂN TÍCH HÌNH HỌC KHÔNG GIAN KHỐI LƯỢNG ---
+# --- PHÂN TÍCH HÌNH HỌC KHÔNG GIAN KHỐI LƯỢNG ---
 if st.session_state['surf1_data'] is not None and st.session_state['surf2_data'] is not None:
     s1 = st.session_state['surf1_data']
     s2 = st.session_state['surf2_data']
@@ -396,7 +169,8 @@ if st.session_state['surf1_data'] is not None and st.session_state['surf2_data']
         # Tính toán sơ bộ phương án Mesh Skirt 1 (Gốc cũ) để đối chiếu
         area_core = bborder_poly.area
         vol_skirt_1 = abs(s1_in['Z'].mean() - s2_in['Z'].mean()) * area_core
-                # --- HIỂN THỊ KẾT QUẢ VĂN BẢN VÀ ĐỒ THỊ ---
+
+        # --- HIỂN THỊ KẾT QUẢ VĂN BẢN VÀ ĐỒ THỊ ---
         st.header("📊 Kết quả phân tích hình học & Thể tích Lăng trụ")
         report_text = f"""--- BÁO CÁO ĐỐI CHIẾU THUẬT TOÁN BIÊN CIVIL3D ---
 Hệ tọa độ trắc địa: {crs_option}
@@ -472,5 +246,5 @@ Diện tích lõi tính toán BBorder: {area_core:.3f} m²
             data=dxf_bytes,
             file_name="Mesh_Skirt_2_Validation.dxf",
             mime="application/dxf"
-        )
+            )
         
