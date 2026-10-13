@@ -3,12 +3,12 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from scipy.spatial import Delaunay
-from utils import parse_points, interpolate_tin_z, export_to_dxf
+from utils import parse_points, interpolate_tin_z, export_to_dxf, extract_boundary_edges
 
 st.set_page_config(page_title="Xử lý Số liệu Trắc địa & Tính Khối lượng", layout="wide")
 
 st.title("🗺️ Web App Xử lý Số liệu Trắc địa & Tính Khối lượng (Civil3D Approach)")
-st.write("Phương án Online: **Cloud-Centric Streamlit** | Render hình học Client-side qua **Plotly 3D**")
+st.write("Phương án Online: **Cloud-Centric Streamlit** | Render hình học Client-side nâng cao qua **Plotly 3D**")
 
 # ================= NAVIGATION SIDEBAR =================
 st.sidebar.header("🛠️ 1. Nạp & Chuẩn hóa Dữ liệu")
@@ -45,7 +45,6 @@ if file2:
     id2 = st.sidebar.selectbox("Mã điểm (ID)", ["Tự động tạo ID"] + cols2, key="id2")
     file2.seek(0)
     points2 = parse_points(file2, x2, y2, z2, id2)
-
 # ================= MAIN EXECUTION PIPELINE =================
 if points1 is not None and points2 is not None:
     pts1_2d = points1[['X', 'Y']].values
@@ -113,17 +112,77 @@ Dien tich vung bien truc giao giao thoa (BBorder): {bborder_total_area:,.2f} m2
         st.text(raw_text_report)
         st.download_button(label="📥 Tải báo cáo văn bản (.TXT)", data=raw_text_report, file_name="BaoCao_KhoiLuong_TracDia.txt", mime="text/plain")
         
-        # --- OUTPUT DXF ---
         st.header("📐 2. Xuất Bản vẽ Bản đồ Địa hình Kỹ thuật CAD (.DXF)")
         dxf_data = export_to_dxf(points1, points2, tri1, tri2, min_x, max_x, min_y, max_y, text_height_base, text_id_base)
         st.download_button(label="📥 Tải xuống Bản vẽ CAD Hình học (.DXF)", data=dxf_data, file_name="BanVe_MoHinh_TIN.dxf", mime="application/dxf")
-        
-        # --- DISPLAY PLOTLY 3D ---
-        st.header("📦 3. Mô hình Hình học Lưới TIN Không gian 3D")
+            # --- DISPLAY PLOTLY 3D ---
+        st.header("📦 3. Mô hình Hình học Không gian 3D nâng cao")
         fig = go.Figure()
-        fig.add_trace(go.Mesh3d(x=points1['X'], y=points1['Y'], z=points1['Z'], intensity=points1['Z'], colorscale='Viridis', name='Bề mặt 1', opacity=0.7, showscale=False))
-        fig.add_trace(go.Mesh3d(x=points2['X'], y=points2['Y'], z=points2['Z'], intensity=points2['Z'], colorscale='Cividis', name='Bề mặt 2', opacity=0.5, showscale=False))
-        fig.update_layout(scene=dict(xaxis_title='X', yaxis_title='Y', zaxis_title='Z'), margin=dict(l=0, r=0, b=0, t=30), height=600)
+        
+        # 1. Bề mặt hiện trạng 1 (Màu Xanh lục - lục bảo)
+        fig.add_trace(go.Mesh3d(
+            x=points1['X'], y=points1['Y'], z=points1['Z'],
+            intensity=points1['Z'], colorscale='Viridis', name='Bề mặt 1 (Hiện trạng)', opacity=0.6, showscale=False
+        ))
+        
+        # 2. Bề mặt thiết kế/cơ sở 2 (Màu Xám đồng)
+        fig.add_trace(go.Mesh3d(
+            x=points2['X'], y=points2['Y'], z=points2['Z'],
+            intensity=points2['Z'], colorscale='Cividis', name='Bề mặt 2 (Cơ sở)', opacity=0.4, showscale=False
+        ))
+        
+        # 3. Thuật toán trích xuất biên dựng khối cho Vertical Side và Mesh Skirt
+        edges_1 = extract_boundary_edges(tri1)
+        v_x, v_y, v_z = [], [], []
+        i_idx, j_idx, k_idx = [], [], []
+        p_count = 0
+        
+        for edge in edges_1:
+            p1_node = points1.iloc[edge[0]]
+            p2_node = points1.iloc[edge[1]]
+            
+            z1_base = interpolate_tin_z(tri2, points2[['X', 'Y', 'Z']].values, np.array([[p1_node['X'], p1_node['Y']]]))
+            z2_base = interpolate_tin_z(tri2, points2[['X', 'Y', 'Z']].values, np.array([[p2_node['X'], p2_node['Y']]]))
+            
+            if not np.isnan(z1_base) and not np.isnan(z2_base):
+                v_x.extend([p1_node['X'], p2_node['X'], p1_node['X'], p2_node['X']])
+                v_y.extend([p1_node['Y'], p2_node['Y'], p1_node['Y'], p2_node['Y']])
+                v_z.extend([p1_node['Z'], p2_node['Z'], z1_base[0], z2_base[0]])
+                
+                i_idx.extend([p_count, p_count+1, p_count+1])
+                j_idx.extend([p_count+1, p_count+2, p_count+2])
+                k_idx.extend([p_count+2, p_count, p_count+3])
+                p_count += 4
+                
+        if p_count > 0:
+            # 4. Hiển thị Vertical Side Surface bằng màu Đỏ Crimson
+            fig.add_trace(go.Mesh3d(
+                x=v_x, y=v_y, z=v_z, i=i_idx, j=j_idx, k=k_idx,
+                color='crimson', name='Vertical Side Surface', opacity=0.85
+            ))
+            
+            # 5. Mô phỏng Mesh Skirt (Mái dốc thoải biên kết nối) bằng màu Cam rực rỡ
+            skirt_z = [z * 1.01 if z > 0 else z * 0.99 for z in v_z]
+            fig.add_trace(go.Mesh3d(
+                x=v_x, y=v_y, z=skirt_z, i=i_idx, j=j_idx, k=k_idx,
+                color='darkorange', name='Mesh Skirt (Mái dốc biên)', opacity=0.7
+            ))
+
+        # Hiển thị đường BBorder mặt bằng trực giao dạng viền bao sắc nét màu đen
+        bbox_x = [min_x, max_x, max_x, min_x, min_x]
+        bbox_y = [min_y, min_y, max_y, max_y, min_y]
+        bbox_z = [max(points1['Z'].max(), points2['Z'].max()) + 1.0] * 5
+        
+        fig.add_trace(go.Scatter3d(
+            x=bbox_x, y=bbox_y, z=bbox_z, mode='lines',
+            line=dict(color='black', width=5), name='Ranh giới BBorder trực giao'
+        ))
+        
+        fig.update_layout(
+            scene=dict(xaxis_title='Easting (X)', yaxis_title='Northing (Y)', zaxis_title='Cao độ H (Z)'),
+            margin=dict(l=0, r=0, b=0, t=30), height=650
+        )
         st.plotly_chart(fig, use_container_width=True)
 else:
     st.info("💡 Hệ thống đang đợi bạn tải các tệp trắc địa bề mặt lên bảng điều khiển bên trái để phân tích hình học.")
+    
