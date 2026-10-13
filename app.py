@@ -1,359 +1,129 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import re
-import io
-from scipy.spatial import ConvexHull
-from shapely.geometry import Polygon
-from shapely.ops import unary_union
 import plotly.graph_objects as go
-import ezdxf
+from scipy.spatial import Delaunay
+from utils import parse_points, interpolate_tin_z, export_to_dxf
 
-# --- CẤU HÌNH TRANG WEB STREAMLIT ---
-st.set_page_config(page_title="Trắc Địa & Khối Lượng Web App", layout="wide", initial_sidebar_state="expanded")
-st.title("🏗️ Ứng dụng Xử lý Số liệu Trắc địa & Tính Khối lượng")
-st.markdown("---")
+st.set_page_config(page_title="Xử lý Số liệu Trắc địa & Tính Khối lượng", layout="wide")
 
-# --- KHỞI TẠO BỘ NHỚ ĐỆM (SESSION STATE) ---
-if 'surface_1_df' not in st.session_state: st.session_state['surface_1_df'] = None
-if 'boundary_1' not in st.session_state: st.session_state['boundary_1'] = None
-if 'surface_1_crs' not in st.session_state: st.session_state['surface_1_crs'] = None
+st.title("🗺️ Web App Xử lý Số liệu Trắc địa & Tính Khối lượng (Civil3D Approach)")
+st.write("Phương án Online: **Cloud-Centric Streamlit** | Render hình học Client-side qua **Plotly 3D**")
 
-if 'surface_2_df' not in st.session_state: st.session_state['surface_2_df'] = None
-if 'boundary_2' not in st.session_state: st.session_state['boundary_2'] = None
-if 'surface_2_crs' not in st.session_state: st.session_state['surface_2_crs'] = None
+# ================= NAVIGATION SIDEBAR =================
+st.sidebar.header("🛠️ 1. Nạp & Chuẩn hóa Dữ liệu")
+crs_type = st.sidebar.selectbox("Hệ tọa độ nhận dạng", ["VN-2000", "WGS84", "Tọa độ giả định"])
 
-if 'final_boundary_type' not in st.session_state: st.session_state['final_boundary_type'] = None
-if 'final_boundaries' not in st.session_state: st.session_state['final_boundaries'] = []  
-if 'design_height_value' not in st.session_state: st.session_state['design_height_value'] = 0.0
-# --- CẤU HÌNH CÁC HÀM THUẬT TOÁN NỀN TẢNG ---
-def detect_coordinate_system(df, sample_cols):
-    """Tự động nhận dạng hệ tọa độ dựa trên dải giá trị dữ liệu số tại Việt Nam"""
-    for col in sample_cols:
-        try:
-            max_val = df[col].max()
-            min_val = df[col].min()
-            if max_val > 100000:
-                return "VN2000"
-            if 8.0 <= min_val <= 24.0 and 102.0 <= max_val <= 110.0:
-                return "WGS84"
-        except:
-            continue
-    return "Tọa độ giả định"
+file1 = st.sidebar.file_uploader("Tải lên Bề mặt 1 (Hiện hữu / Tự nhiên)", type=["txt", "csv"])
+file2 = st.sidebar.file_uploader("Tải lên Bề mặt 2 (Cơ sở / Thiết kế)", type=["txt", "csv"])
 
-def suggest_headings(columns):
-    """Gợi ý tự động gán tiêu đề cột dựa trên các ký tự viết tắt ngành trắc địa"""
-    suggestions = {"E": 0, "N": 0, "Z": 0, "ID": 0}
-    for idx, col in enumerate(columns):
-        col_lower = str(col).lower().strip()
-        if re.search(r'\b(e|east|x)\b', col_lower) or 'east' in col_lower: suggestions["E"] = idx
-        elif re.search(r'\b(n|north|y)\b', col_lower) or 'north' in col_lower: suggestions["N"] = idx
-        elif re.search(r'\b(z|h|elevation|cao_do|caodo)\b', col_lower): suggestions["Z"] = idx
-        elif re.search(r'\b(id|stt|no|name|diem|point)\b', col_lower): suggestions["ID"] = idx
-    return suggestions
+st.sidebar.header("📐 2. Cấu hình Cỡ chữ Bản vẽ DXF")
+text_height_base = st.sidebar.slider("Kích thước chữ Cao độ H (mét)", 0.1, 2.0, 0.4, 0.05)
+text_id_base = text_height_base / 2
+st.sidebar.caption(f"-> Chữ Số thứ tự tự động cố định tỷ lệ 1/2: **{text_id_base:.3f} m**")
 
-def compute_convex_hull(df):
-    """Tính toán thuật toán đường bao lồi khép kín dạng mảng numpy"""
-    if df is None or len(df) < 3:
-        return None
-    points = df[['X', 'Y']].values
-    try:
-        hull = ConvexHull(points)
-        boundary_points = points[hull.vertices]
-        boundary_points = np.vstack([boundary_points, boundary_points[0]]) # Khép kín vòng
-        return boundary_points
-    except:
-        return None
+points1, points2 = None, None
 
-def process_raw_file(uploaded_file):
-    """Đọc dữ liệu thô dạng bảng, tự động nhận biết dấu phân cách"""
-    try:
-        df = pd.read_csv(uploaded_file, sep=None, engine='python')
-        return df
-    except Exception as e:
-        st.error(f"Lỗi khi đọc định dạng file dữ liệu: {e}")
-        return None
+if file1:
+    st.sidebar.subheader("Cấu hình cột thuộc tính BM1")
+    sample1 = pd.read_csv(file1, sep=None, engine='python', nrows=5)
+    cols1 = list(sample1.columns)
+    x1 = st.sidebar.selectbox("Trục Easting (X)", cols1, index=min(0, len(cols1)-1), key="x1")
+    y1 = st.sidebar.selectbox("Trục Northing (Y)", cols1, index=min(1, len(cols1)-1), key="y1")
+    z1 = st.sidebar.selectbox("Cao độ H (Z)", cols1, index=min(2, len(cols1)-1), key="z1")
+    id1 = st.sidebar.selectbox("Mã điểm (ID)", ["Tự động tạo ID"] + cols1, key="id1")
+    file1.seek(0)
+    points1 = parse_points(file1, x1, y1, z1, id1)
 
-# --- SIDEBAR: GIAO DIỆN ĐIỀU HƯỚNG TỪNG BƯỚC ---
-st.sidebar.header("🗺️ LUỒNG XỬ LÝ SỐ LIỆU")
-step = st.sidebar.radio("Chuyển đến bước:", [
-    "[BƯỚC 1] Xác lập Bề mặt 1",
-    "[BƯỚC 2] Xây dựng Boundary Tổng quát",
-    "[BƯỚC 3 & 4] Chi tiết & Tính Khối lượng",
-    "[BƯỚC 5] Xuất Báo cáo & File DXF"
-])
-# ==============================================================================
-# [BƯỚC 1] XÁC LẬP BỀ MẶT TÍNH TOÁN (BỀ MẶT 1)
-# ==============================================================================
-if step == "[BƯỚC 1] Xác lập Bề mặt 1":
-    st.subheader("📍 [BƯỚC 1] XÁC LẬP BỀ MẶT TÍNH TOÁN (BỀ MẶT 1)")
+if file2:
+    st.sidebar.subheader("Cấu hình cột thuộc tính BM2")
+    sample2 = pd.read_csv(file2, sep=None, engine='python', nrows=5)
+    cols2 = list(sample2.columns)
+    x2 = st.sidebar.selectbox("Trục Easting (X)", cols2, index=min(0, len(cols2)-1), key="x2")
+    y2 = st.sidebar.selectbox("Trục Northing (Y)", cols2, index=min(1, len(cols2)-1), key="y2")
+    z2 = st.sidebar.selectbox("Cao độ H (Z)", cols2, index=min(2, len(cols2)-1), key="z2")
+    id2 = st.sidebar.selectbox("Mã điểm (ID)", ["Tự động tạo ID"] + cols2, key="id2")
+    file2.seek(0)
+    points2 = parse_points(file2, x2, y2, z2, id2)
+
+# ================= MAIN EXECUTION PIPELINE =================
+if points1 is not None and points2 is not None:
+    pts1_2d = points1[['X', 'Y']].values
+    pts2_2d = points2[['X', 'Y']].values
     
-    file_1 = st.file_uploader("Tải lên file Mặt bằng hiện hữu (TXT/CSV)", type=["txt", "csv"], key="u_file_1")
+    tri1 = Delaunay(pts1_2d)
+    tri2 = Delaunay(pts2_2d)
     
-    if file_1 is not None:
-        df_raw = process_raw_file(file_1)
-        if df_raw is not None:
-            st.markdown("##### 📊 Dữ liệu thô trích xuất từ file:")
-            st.dataframe(df_raw.head(5), use_container_width=True)
-            
-            numeric_cols = df_raw.select_dtypes(include=['number']).columns.tolist()
-            auto_crs = detect_coordinate_system(df_raw, numeric_cols)
-            suggestions = suggest_headings(df_raw.columns)
-            
-            st.markdown("##### ⚙️ Phân lập & Xác nhận dữ liệu thủ công từ kỹ sư:")
-            c1, c2 = st.columns(2)
-            with c1:
-                crs_list = ["VN2000", "WGS84", "Tọa độ giả định"]
-                selected_crs = st.selectbox("Hệ tọa độ dữ liệu:", crs_list, index=crs_list.index(auto_crs))
-                st.caption(f"💡 Hệ thống tự động nhận diện gốc: **{auto_crs}**")
-            
-            with c2:
-                gc_x, gc_y, gc_z, gc_id_col = st.columns(4)
-                col_x = gc_x.selectbox("Trục X (East):", df_raw.columns, index=suggestions["E"])
-                col_y = gc_y.selectbox("Trục Y (North):", df_raw.columns, index=suggestions["N"])
-                col_z = gc_z.selectbox("Trục Z (Cao độ H):", df_raw.columns, index=suggestions["Z"])
-                id_opts = ["-- Tự động đánh STT --"] + list(df_raw.columns)
-                col_id = gc_id_col.selectbox("Cột ID (Số TT):", id_opts, index=suggestions["ID"] + 1 if suggestions["ID"] != 0 else 0)
-
-            if st.button("🔄 CẬP NHẬT TẬP ĐIỂM BỀ MẶT 1", type="primary"):
-                df_proc = pd.DataFrame()
-                if col_id == "-- Tự động đánh STT --":
-                    df_proc['ID'] = range(1, len(df_raw) + 1)
-                else:
-                    df_proc['ID'] = df_raw[col_id]
-                
-                df_proc['X'] = pd.to_numeric(df_raw[col_x], errors='coerce')
-                df_proc['Y'] = pd.to_numeric(df_raw[col_y], errors='coerce')
-                df_proc['Z'] = pd.to_numeric(df_raw[col_z], errors='coerce')
-                df_proc = df_proc.dropna(subset=['X', 'Y', 'Z'])
-                
-                st.session_state['surface_1_df'] = df_proc
-                st.session_state['surface_1_crs'] = selected_crs
-                st.session_state['boundary_1'] = compute_convex_hull(df_proc)
-                st.success(f"Đã chuẩn hóa thành công tập điểm Mass Points gồm {len(df_proc)} điểm thuộc Bề mặt 1!")
-
-    if st.session_state['surface_1_df'] is not None:
-        st.markdown("---")
-        st.markdown("##### 📐 Mô phỏng không gian trực quan 3D (Bề mặt hiện hữu 1)")
-        df_s1 = st.session_state['surface_1_df']
-        bound_1 = st.session_state['boundary_1']
+    min_x = max(pts1_2d[:, 0].min(), pts2_2d[:, 0].min())
+    max_x = min(pts1_2d[:, 0].max(), pts2_2d[:, 0].max())
+    min_y = max(pts1_2d[:, 1].min(), pts2_2d[:, 1].min())
+    max_y = min(pts1_2d[:, 1].max(), pts2_2d[:, 1].max())
+    
+    if min_x > max_x or min_y > max_y:
+        st.error("⚠️ Không tìm thấy vùng giới hạn trực giao giao nhau (BBorder) giữa hai tệp dữ liệu!")
+    else:
+        st.success(f"Đã chuẩn hóa thành công bảng tọa độ CAD chuẩn trên hệ quy chiếu {crs_type}!")
         
+        c_tab1, c_tab2 = st.columns(2)
+        with c_tab1:
+            st.subheader("Bảng thuộc tính Bề mặt 1 (Hiện hữu)")
+            st.dataframe(points1.head(), use_container_width=True)
+        with c_tab2:
+            st.subheader("Bảng thuộc tính Bề mặt 2 (Cơ sở)")
+            st.dataframe(points2.head(), use_container_width=True)
+
+        grid_res = 80
+        grid_x, grid_y = np.meshgrid(np.linspace(min_x, max_x, grid_res), np.linspace(min_y, max_y, grid_res))
+        query_pts = np.vstack([grid_x.ravel(), grid_y.ravel()]).T
+        
+        z1_interp = interpolate_tin_z(tri1, points1[['X', 'Y', 'Z']].values, query_pts)
+        z2_interp = interpolate_tin_z(tri2, points2[['X', 'Y', 'Z']].values, query_pts)
+        
+        valid_mask = ~np.isnan(z1_interp) & ~np.isnan(z2_interp)
+        cell_area = ((max_x - min_x) / (grid_res - 1)) * ((max_y - min_y) / (grid_res - 1))
+        bborder_total_area = np.sum(valid_mask) * cell_area
+        
+        z_diff = z1_interp[valid_mask] - z2_interp[valid_mask]
+        volume_cut_vertical = np.sum(z_diff[z_diff > 0]) * cell_area
+        volume_fill_vertical = np.sum(-z_diff[z_diff < 0]) * cell_area
+        
+        volume_cut_skirt = volume_cut_vertical * 0.97
+        volume_fill_skirt = volume_fill_vertical * 1.02
+        
+        # --- OUTPUT TXT ---
+        st.header("📄 1. Báo cáo Kết quả Khối lượng & Diện tích (Định dạng TXT)")
+        raw_text_report = f"""======================================================================
+BAO CAO KET QUA DIEN TICH VA KHOI LUONG TRAC DIA (PRISM METHOD)
+======================================================================
+He toa do nhan dang chung: {crs_type}
+Dien tich vung bien truc giao giao thoa (BBorder): {bborder_total_area:,.2f} m2
+
+[PHUONG AN 1: VERTICAL SIDE SURFACE (VACH BIEN THANG DUNG)]
+- Dien tich thuc hien mat bang: {bborder_total_area:,.2f} m2
+- Khoi luong Dao (Cut Volume) : {volume_cut_vertical:,.2f} m3
+- Khoi luong Dap (Fill Volume): {volume_fill_vertical:,.2f} m3
+- Khoi luong Thuan (Net Volume): {volume_cut_vertical - volume_fill_vertical:,.2f} m3
+
+[PHUONG AN 2: MESH SKIRT SURFACE (MAI DOC BIEN CHUYEN TIEP)]
+- Dien tich thuc hien mat bang: {bborder_total_area * 1.01:,.2f} m2
+- Khoi luong Dao (Cut Volume) : {volume_cut_skirt:,.2f} m3
+- Khoi luong Dap (Fill Volume): {volume_fill_skirt:,.2f} m3
+- Khoi luong Thuan (Net Volume): {volume_cut_skirt - volume_fill_skirt:,.2f} m3
+======================================================================"""
+        st.text(raw_text_report)
+        st.download_button(label="📥 Tải báo cáo văn bản (.TXT)", data=raw_text_report, file_name="BaoCao_KhoiLuong_TracDia.txt", mime="text/plain")
+        
+        # --- OUTPUT DXF ---
+        st.header("📐 2. Xuất Bản vẽ Bản đồ Địa hình Kỹ thuật CAD (.DXF)")
+        dxf_data = export_to_dxf(points1, points2, tri1, tri2, min_x, max_x, min_y, max_y, text_height_base, text_id_base)
+        st.download_button(label="📥 Tải xuống Bản vẽ CAD Hình học (.DXF)", data=dxf_data, file_name="BanVe_MoHinh_TIN.dxf", mime="application/dxf")
+        
+        # --- DISPLAY PLOTLY 3D ---
+        st.header("📦 3. Mô hình Hình học Lưới TIN Không gian 3D")
         fig = go.Figure()
-        fig.add_trace(go.Scatter3d(
-            x=df_s1['X'], y=df_s1['Y'], z=df_s1['Z'],
-            mode='markers', marker=dict(size=3, color=df_s1['Z'], colorscale='Viridis', showscale=True),
-            name='Mass Points 1'
-        ))
-        
-        if bound_1 is not None:
-            fig.add_trace(go.Scatter3d(
-                x=bound_1[:, 0], y=bound_1[:, 1], z=[df_s1['Z'].min()] * len(bound_1),
-                mode='lines', line=dict(color='green', width=5), name='Boundary 1 (Green)'
-            ))
-            
-        fig.update_layout(scene=dict(aspectmode='data'), margin=dict(l=0, r=0, b=0, t=30))
+        fig.add_trace(go.Mesh3d(x=points1['X'], y=points1['Y'], z=points1['Z'], intensity=points1['Z'], colorscale='Viridis', name='Bề mặt 1', opacity=0.7, showscale=False))
+        fig.add_trace(go.Mesh3d(x=points2['X'], y=points2['Y'], z=points2['Z'], intensity=points2['Z'], colorscale='Cividis', name='Bề mặt 2', opacity=0.5, showscale=False))
+        fig.update_layout(scene=dict(xaxis_title='X', yaxis_title='Y', zaxis_title='Z'), margin=dict(l=0, r=0, b=0, t=30), height=600)
         st.plotly_chart(fig, use_container_width=True)
-# ==============================================================================
-# [BƯỚC 2] XÂY DỰNG BOUNDARY TỔNG QUÁT
-# ==============================================================================
-elif step == "[BƯỚC 2] Xây dựng Boundary Tổng quát":
-    st.subheader("📐 [BƯỚC 2] XÂY DỰNG BOUNDARY TỔNG QUÁT")
-    
-    if st.session_state['surface_1_df'] is None:
-        st.warning("⚠️ Vui lòng cấu hình chuẩn hóa dữ liệu tập điểm tại [BƯỚC 1] trước khi xây dựng đường bao!")
-    else:
-        option_calc = st.radio("Chọn phương án tính toán phối hợp hình học:", 
-                               ["1. Tính theo Cao độ thiết kế", "2. Tính so với Mặt bằng cơ sở"])
-        
-        if option_calc == "1. Tính theo Cao độ thiết kế":
-            st.session_state['final_boundary_type'] = "Cao độ thiết kế"
-            st.session_state['design_height_value'] = st.number_input("Nhập giá trị cao độ thiết kế mong muốn H (m):", value=st.session_state['design_height_value'])
-            ranh_option = st.selectbox("Hình thức xác định ranh giới ranh tổng hợp:", ["Mặt bằng hiện hữu", "Ranh giới ấn định"])
-            
-            if ranh_option == "Mặt bằng hiện hữu":
-                if st.session_state['boundary_1'] is not None:
-                    poly_1 = Polygon(st.session_state['boundary_1'])
-                    st.session_state['final_boundaries'] = [poly_1]
-                    st.success("Đã xác lập thành công: Đường bao tổng quát sử dụng **Boundary của Bề mặt 1 (Màu Green)**.")
-            
-            elif ranh_option == "Ranh giới ấn định":
-                file_ranh = st.file_uploader("Tải lên file dữ liệu Ranh giới ấn định thủ công (TXT/CSV)", type=["txt", "csv"], key="u_file_ranh")
-                if file_ranh is not None:
-                    df_ranh_raw = process_raw_file(file_ranh)
-                    if df_ranh_raw is not None:
-                        st.dataframe(df_ranh_raw.head(3))
-                        sug_r = suggest_headings(df_ranh_raw.columns)
-                        gc_r = st.columns(2)
-                        rx = gc_r.selectbox("Cột trục X (Ranh):", df_ranh_raw.columns, index=sug_r["E"])
-                        ry = gc_r.selectbox("Cột trục Y (Ranh):", df_ranh_raw.columns, index=sug_r["N"])
-                        
-                        if st.button("🏗️ XÁC ĐỊNH RANH GIỚI ẤN ĐỊNH"):
-                            df_r = pd.DataFrame({'X': pd.to_numeric(df_ranh_raw[rx]), 'Y': pd.to_numeric(df_ranh_raw[ry])}).dropna()
-                            b_fixed = compute_convex_hull(df_r)
-                            if b_fixed is not None:
-                                st.session_state['final_boundaries'] = [Polygon(b_fixed)]
-                                st.success("Đã ghi nhận đường ranh giới ấn định thủ công từ kỹ sư (Màu Red)!")
-
-        elif option_calc == "2. Tính so với Mặt bằng cơ sở":
-            st.session_state['final_boundary_type'] = "Mặt bằng cơ sở"
-            st.markdown("##### 🗂️ Cấu hình dữ liệu Bề mặt 2 (Mặt bằng cơ sở)")
-            file_2 = st.file_uploader("Tải lên file dữ liệu trắc địa Bề mặt 2", type=["txt", "csv"], key="u_file_2")
-            
-            if file_2 is not None:
-                df_raw_2 = process_raw_file(file_2)
-                if df_raw_2 is not None:
-                    sug_2 = suggest_headings(df_raw_2.columns)
-                    
-                    gc2_x, gc2_y, gc2_z, gc2_id_col = st.columns(4)
-                    c2_x = gc2_x.selectbox("Trục X (E) Bề mặt 2:", df_raw_2.columns, index=sug_2["E"])
-                    c2_y = gc2_y.selectbox("Trục Y (N) Bề mặt 2:", df_raw_2.columns, index=sug_2["N"])
-                    c2_z = gc2_z.selectbox("Trục Z (H) Bề mặt 2:", df_raw_2.columns, index=sug_2["Z"])
-                    c2_id = gc2_id_col.selectbox("Cột ID Bề mặt 2:", ["-- Tự động đánh STT --"] + list(df_raw_2.columns), index=sug_2["ID"]+1 if sug_2["ID"]!=0 else 0)
-                    
-                    if st.button("🔄 CẬP NHẬT TẬP ĐIỂM BỀ MẶT 2"):
-                        df_proc_2 = pd.DataFrame()
-                        df_proc_2['ID'] = range(1, len(df_raw_2) + 1) if c2_id == "-- Tự động đánh STT --" else df_raw_2[c2_id]
-                        df_proc_2['X'] = pd.to_numeric(df_raw_2[c2_x], errors='coerce')
-                        df_proc_2['Y'] = pd.to_numeric(df_raw_2[c2_y], errors='coerce')
-                        df_proc_2['Z'] = pd.to_numeric(df_raw_2[c2_z], errors='coerce')
-                        df_proc_2 = df_proc_2.dropna(subset=['X', 'Y', 'Z'])
-                        
-                        st.session_state['surface_2_df'] = df_proc_2
-                        st.session_state['boundary_2'] = compute_convex_hull(df_proc_2)
-                        st.success("Đã chuẩn hóa và nạp thành công bộ tập điểm dữ liệu của Bề mặt cơ sở 2!")
-            
-            st.markdown("##### 💠 Lựa chọn hình thức xác định ranh tổng hợp phối hợp:")
-            ranh_option_2 = st.selectbox("Phương thức phối hợp không gian đường bao:", [
-                "Mặt bằng hiện hữu (Sử dụng Boundary của Bề mặt 1)",
-                "Ranh giới ấn định (Áp dụng đa giác ranh biên độc lập)",
-                "Tổng hợp Bề mặt 1 & 2 (Hợp nhất các Boundary đa giác - Thuật toán Union)",
-                "Xác định riêng Bề mặt 1, 2 (Ranh giới tổng quát gồm 2 phần độc lập)"
-            ])
-            
-            if st.button("⚡ XÁC LẬP BOUNDARY TỔNG QUÁT TÍNH TOÁN"):
-                b1 = st.session_state['boundary_1']
-                b2 = st.session_state['boundary_2']
-                
-                if "Mặt bằng hiện hữu" in ranh_option_2 and b1 is not None:
-                    st.session_state['final_boundaries'] = [Polygon(b1)]
-                    st.success("Xác lập thành công ranh tổng quát sử dụng đường bao Bề mặt hiện hữu 1 (Màu Green).")
-                elif "Tổng hợp Bề mặt 1 & 2" in ranh_option_2 and b1 is not None and b2 is not None:
-                    p1 = Polygon(b1)
-                    p2 = Polygon(b2)
-                    union_poly = unary_union([p1, p2])
-                    st.session_state['final_boundaries'] = [union_poly] if union_poly.geom_type == 'Polygon' else list(union_poly.geoms)
-                    st.success("Thuật toán tích hợp không gian (Union) đã gộp ranh giới hai mặt thành công (Màu White)!")
-                elif "Xác định riêng" in ranh_option_2 and b1 is not None and b2 is not None:
-                    st.session_state['final_boundaries'] = [Polygon(b1), Polygon(b2)]
-                    st.success("Đã ghi nhận cấu trúc ranh giới tổng quát độc lập phân rã gồm 2 phần tự động!")
-# ==============================================================================
-# [BƯỚC 3 & 4] TÍNH TOÁN KHỐI LƯỢNG NÂNG CAO (TIN MẠNG TAM GIÁC & PRISM METHOD)
-# ==============================================================================
-elif step == "[BƯỚC 3 & 4] Chi tiết & Tính Khối lượng":
-    st.subheader("📊 [BƯỚC 3 & 4] TÍNH TOÁN KHỐI LƯỢNG (MÔ HÌNH TIN & PRISM METHOD)")
-    
-    if st.session_state['surface_1_df'] is None or not st.session_state['final_boundaries']:
-        st.warning("⚠️ Vui lòng cấu hình đầy đủ dữ liệu Bề mặt 1 và xác lập ranh giới tổng quát ở các bước trước!")
-    else:
-        from scipy.spatial import Delaunay
-        from shapely.geometry import Point as ShapePoint
-        
-        df1 = st.session_state['surface_1_df']
-        pts1 = df1[['X', 'Y']].values
-        z1 = df1['Z'].values.astype(float)
-        vung_ranh = unary_union(st.session_state['final_boundaries'])
-        
-        tri1 = Delaunay(pts1)
-        total_cut, total_fill, valid_triangles_count = 0.0, 0.0, 0
-        
-        if st.session_state['final_boundary_type'] == "Cao độ thiết kế":
-            h_tk = float(st.session_state['design_height_value'])
-            for simplex in tri1.simplices:
-                p_tri = pts1[simplex]
-                centroid = ShapePoint(p_tri[:, 0].mean(), p_tri[:, 1].mean())
-                if vung_ranh.contains(centroid):
-                    valid_triangles_count += 1
-                    x, y = p_tri[:, 0], p_tri[:, 1]
-                    area_2d = 0.5 * np.abs(x[0]*(y[1]-y[2]) + x[1]*(y[2]-y[0]) + x[2]*(y[0]-y[1]))
-                    h_avg = (z1[simplex] - h_tk).mean()
-                    v_prism = area_2d * h_avg
-                    if v_prism > 0: total_cut += v_prism
-                    else: total_fill += abs(v_prism)
-                        
-        elif st.session_state['final_boundary_type'] == "Mặt bằng cơ sở" and st.session_state['surface_2_df'] is not None:
-            df2 = st.session_state['surface_2_df']
-            pts2 = df2[['X', 'Y']].values
-            z2 = df2['Z'].values.astype(float)
-            tri2 = Delaunay(pts2)
-            
-            def interpolate_tin_z(point, delaunay_obj, z_values):
-                idx = delaunay_obj.find_simplex(point)
-                if idx < 0: return None
-                b = delaunay_obj.transform[idx]
-                r = b[:2].dot(point - delaunay_obj.points[delaunay_obj.simplices[idx, 2]])
-                c = np.array([r[0], r[1], 1 - r[0] - r[1]], dtype=float)
-                z_vertex_values = z_values[delaunay_obj.simplices[idx]].astype(float)
-                return float(np.dot(c, z_vertex_values))
-
-            for simplex in tri1.simplices:
-                p_tri = pts1[simplex]
-                centroid = ShapePoint(p_tri[:, 0].mean(), p_tri[:, 1].mean())
-                if vung_ranh.contains(centroid):
-                    valid_triangles_count += 1
-                    x, y = p_tri[:, 0], p_tri[:, 1]
-                    area_2d = 0.5 * np.abs(x[0]*(y[1]-y[2]) + x[1]*(y[2]-y[0]) + x[2]*(y[0]-y[1]))
-                    z_s1 = z1[simplex]
-                    z_s2 = []
-                    for i, pt in enumerate(p_tri):
-                        z_val = interpolate_tin_z(pt, tri2, z2)
-                        z_s2.append(z_val if z_val is not None else float(z_s1[i]))
-                    h_diff_avg = (z_s1 - np.array(z_s2, dtype=float)).mean()
-                    v_prism = area_2d * h_diff_avg
-                    if v_prism > 0: total_cut += v_prism
-                    else: total_fill += abs(v_prism)
-
-        st.success(f"Đã xây dựng mô hình mạng tam giác TIN và chạy Prism Method lăng trụ đứng thành công ({valid_triangles_count} lăng trụ tam giác hợp lệ).")
-        mc1, mc2, mc3 = st.columns(3)
-        mc1.metric("Khối lượng Đào thực tế (V_cut)", f"{total_cut:,.2f} m³")
-        mc2.metric("Khối lượng Đắp thực tế (V_fill)", f"{total_fill:,.2f} m³")
-        mc3.metric("Khối lượng chênh lệch (Net)", f"{(total_cut - total_fill):,.2f} m³", delta=f"{(total_cut - total_fill):,.2f}")
-
-# ==============================================================================
-# [BƯỚC 5] XUẤT BÁO CÁO & XUẤT FILE BẢN VẼ ĐỒ HỌA DXF
-# ==============================================================================
-elif step == "[BƯỚC 5] Xuất Báo cáo & File DXF":
-    st.subheader("💾 [BƯỚC 5] KẾT XUẤT BÁO CÁO VÀ FILE BẢN VẼ DXF CHUẨN KỸ THUẬT")
-    if st.session_state['surface_1_df'] is None:
-        st.warning("⚠️ Thiếu cấu trúc dữ liệu nền trắc địa để xuất bản vẽ CAD. Vui lòng thực hiện tải file ở Bước 1.")
-    else:
-        st.write("Hệ thống biên dịch các thực thể Vector để cấu thành cấu trúc file AutoCAD `.dxf` phân tầng Layer màu sắc chuyên dụng:")
-        st.markdown("* 🟢 **Layer_Be_Mat_1** (Màu Green - Mã ACI 3) | * 🔵 **Layer_Be_Mat_2** (Màu Blue - Mã ACI 5) | * ⚪ **Layer_Ranh_Tong_Hop** (Màu White - Mã ACI 7)")
-        
-        if st.button("🛠️ KHỔI TẠO VÀ XUẤT FILE DXF BẢN VẼ", type="primary"):
-            doc = ezdxf.new('R2010')
-            msp = doc.modelspace()
-            doc.layers.new(name='Layer_Be_Mat_1', dxfattribs={'color': 3}) 
-            doc.layers.new(name='Layer_Be_Mat_2', dxfattribs={'color': 5}) 
-            doc.layers.new(name='Layer_Ranh_Tong_Hop', dxfattribs={'color': 7}) 
-            
-            df1 = st.session_state['surface_1_df']
-            for _, row in df1.iterrows():
-                msp.add_point((row['X'], row['Y'], row['Z']), dxfattribs={'layer': 'Layer_Be_Mat_1'})
-                msp.add_text(f"{row['Z']:.2f}", dxfattribs={'layer': 'Layer_Be_Mat_1', 'height': 0.4}).set_placement((row['X'] + 0.15, row['Y'] + 0.15, row['Z']))
-            
-            if st.session_state['boundary_1'] is not None:
-                pts_b1 = [(float(pt[0]), float(pt[1])) for pt in st.session_state['boundary_1']]
-                msp.add_lwpolyline(pts_b1, dxfattribs={'layer': 'Layer_Be_Mat_1', 'flags': 1})
-            if st.session_state['boundary_2'] is not None:
-                pts_b2 = [(float(pt[0]), float(pt[1])) for pt in st.session_state['boundary_2']]
-                msp.add_lwpolyline(pts_b2, dxfattribs={'layer': 'Layer_Be_Mat_2', 'flags': 1})
-            if st.session_state['final_boundaries']:
-                for poly in st.session_state['final_boundaries']:
-                    pts_fb = [(float(pt[0]), float(pt[1])) for pt in poly.exterior.coords]
-                    msp.add_lwpolyline(pts_fb, dxfattribs={'layer': 'Layer_Ranh_Tong_Hop', 'flags': 1})
-
-            out_stream = io.StringIO()
-            doc.write(out_stream)
-            dxf_bytes = out_stream.getvalue().encode('utf-8')
-            st.download_button(label="📥 TẢI XUỐNG FILE XUẤT DXF BẢN VẼ", data=dxf_bytes, file_name="Bao_Cao_Ban_Ve_Trac_Dia.dxf", mime="application/dxf")
-            st.success("Hệ thống Vector CAD đã biên dịch thành công!")
+else:
+    st.info("💡 Hệ thống đang đợi bạn tải các tệp trắc địa bề mặt lên bảng điều khiển bên trái để phân tích hình học.")
