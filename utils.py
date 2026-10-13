@@ -40,66 +40,58 @@ def extract_boundary_edges(tri):
             u, v = simplex[i], simplex[(i + 1) % 3]
             edge = tuple(sorted((u, v)))
             edges[edge] = edges.get(edge, 0) + 1
-    # Đường biên ngoài cùng là những cạnh chỉ thuộc về đúng 1 tam giác
     boundary_edges = [edge for edge, count in edges.items() if count == 1]
     return boundary_edges
 
 def export_to_dxf(p1, p2, tri1, tri2, min_x, max_x, min_y, max_y, h_size, id_size):
-    """Khởi tạo cấu trúc dữ liệu bản vẽ DXF phân tách lớp độc lập an toàn tuyệt đối"""
+    """Khởi tạo cấu trúc dữ liệu bản vẽ DXF an toàn tuyệt đối, tương thích Python 3.14"""
     doc = ezdxf.new('R2010')
     msp = doc.modelspace()
     
-    # Cấu hình màu sắc mã màu CAD chuẩn (ACI) cho từng Layer kỹ thuật
-    layers_config = {
-        "TIN_SURFACE_1": 3,     # Green (Xanh lá)
-        "TIN_SURFACE_2": 4,     # Cyan (Xanh lam)
-        "BBORDER": 1,           # Red (Đỏ)
-        "POINTS_SURFACE_1": 7,  # White (Trắng)
-        "POINTS_SURFACE_2": 2   # Yellow (Vàng)
-    }
-    
-    # Khởi tạo Layer thông qua gán thuộc tính đối tượng trực tiếp để tránh lỗi dxfattribs
+    # Cấu hình Layer độc lập
+    layers_config = {"TIN_SURFACE_1": 3, "TIN_SURFACE_2": 4, "BBORDER": 1, "POINTS_SURFACE_1": 7, "POINTS_SURFACE_2": 2}
     for name, color_code in layers_config.items():
         if name not in doc.layers:
             layer = doc.layers.new(name=name)
             layer.color = color_code
         
-    # 1. Xuất lưới tam giác TIN bề mặt 1 (Dạng khối hình học 3DFACE)
+    # 1. Xuất lưới TIN bề mặt 1 (Ép mảng điểm về List Python thuần tuý)
     for tri in tri1.simplices:
         pts = p1.iloc[tri][['X', 'Y', 'Z']].values
-        msp.add_3dface(pts, dxfattribs={'layer': 'TIN_SURFACE_1'})
+        pts_list = [(float(p[0]), float(p[1]), float(p[2])) for p in pts]
+        msp.add_3dface(pts_list, dxfattribs={'layer': 'TIN_SURFACE_1'})
         
-    # 2. Xuất lưới tam giác TIN bề mặt 2 (Dạng khối hình học 3DFACE)
+    # 2. Xuất lưới TIN bề mặt 2
     for tri in tri2.simplices:
         pts = p2.iloc[tri][['X', 'Y', 'Z']].values
-        msp.add_3dface(pts, dxfattribs={'layer': 'TIN_SURFACE_2'})
+        pts_list = [(float(p[0]), float(p[1]), float(p[2])) for p in pts]
+        msp.add_3dface(pts_list, dxfattribs={'layer': 'TIN_SURFACE_2'})
         
     # 3. Xuất đường bao ranh giới giới hạn trực giao BBorder dạng khép kín
-    bbox_vertices = [(min_x, min_y), (max_x, min_y), (max_x, max_y), (min_x, max_y)]
+    bbox_vertices = [(float(min_x), float(min_y)), (float(max_x), float(min_y)), (float(max_x), float(max_y)), (float(min_x), float(max_y))]
     polyline = msp.add_lwpolyline(bbox_vertices, dxfattribs={'layer': 'BBORDER'})
-    polyline.closed = True  # Đóng kín đường bao ranh giới an toàn
+    polyline.closed = True
         
-    # 4. Xuất các điểm thuộc tính Bề mặt 1: Gồm POINT, cao độ H và số TT (ID nhỏ bằng 1/2 cao độ)
+    # 4. Xuất thuộc tính Bề mặt 1 (Ép kiểu .item() tránh lỗi cấu trúc nội bộ ezdxf)
     for _, row in p1.iterrows():
-        # Thêm điểm POINT cơ sở
-        msp.add_point((row['X'], row['Y'], row['Z']), dxfattribs={'layer': 'POINTS_SURFACE_1'})
+        x_val, y_val, z_val, id_val = float(row['X']), float(row['Y']), float(row['Z']), int(row['ID'])
+        msp.add_point((x_val, y_val, z_val), dxfattribs={'layer': 'POINTS_SURFACE_1'})
         
-        # Text Cao độ H - Chỉ truyền layer và height vào dxfattribs để tránh vấp lỗi thuộc tính hình học
-        text_h = msp.add_text(f"{row['Z']:.2f}", dxfattribs={'layer': 'POINTS_SURFACE_1', 'height': h_size})
-        text_h.set_placement((row['X'] + 0.1, row['Y'] + 0.1, row['Z']))
+        text_h = msp.add_text(f"{z_val:.2f}", dxfattribs={'layer': 'POINTS_SURFACE_1', 'height': float(h_size)})
+        text_h.set_placement((x_val + 0.1, y_val + 0.1, z_val))
         
-        # Text Số thứ tự (Tỷ lệ chữ nhỏ bằng 1/2)
-        text_id = msp.add_text(f"#{int(row['ID'])}", dxfattribs={'layer': 'POINTS_SURFACE_1', 'height': id_size})
-        text_id.set_placement((row['X'] + 0.1, row['Y'] - (h_size * 0.8), row['Z']))
+        text_id = msp.add_text(f"#{id_val}", dxfattribs={'layer': 'POINTS_SURFACE_1', 'height': float(id_size)})
+        text_id.set_placement((x_val + 0.1, y_val - (float(h_size) * 0.8), z_val))
         
-    # 5. Xuất các điểm thuộc tính Bề mặt 2: Chỉ bao gồm POINT và Số thứ tự (ID)
+    # 5. Xuất thuộc tính Bề mặt 2
     for _, row in p2.iterrows():
-        msp.add_point((row['X'], row['Y'], row['Z']), dxfattribs={'layer': 'POINTS_SURFACE_2'})
+        x_val, y_val, z_val, id_val = float(row['X']), float(row['Y']), float(row['Z']), int(row['ID'])
+        msp.add_point((x_val, y_val, z_val), dxfattribs={'layer': 'POINTS_SURFACE_2'})
         
-        text_bm2_id = msp.add_text(f"#{int(row['ID'])}", dxfattribs={'layer': 'POINTS_SURFACE_2', 'height': id_size})
-        text_bm2_id.set_placement((row['X'] + 0.1, row['Y'] + 0.1, row['Z']))
+        text_bm2_id = msp.add_text(f"#{id_val}", dxfattribs={'layer': 'POINTS_SURFACE_2', 'height': float(id_size)})
+        text_bm2_id.set_placement((x_val + 0.1, y_val + 0.1, z_val))
         
     out_stream = io.StringIO()
     doc.write(out_stream)
     return out_stream.getvalue()
-                      
+        
