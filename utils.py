@@ -1,38 +1,73 @@
 import pandas as pd
 import numpy as np
-from scipy.spatial import ConvexHull
+import ezdxf
+import io
 
-def parse_txt_to_df(uploaded_file):
-    content = uploaded_file.getvalue().decode("utf-8")
-    lines = content.strip().split('\n')
-    sep = ',' if ',' in content else ('\t' if '\t' in content else r'\s+')
-    uploaded_file.seek(0)
-    is_header = not lines[0].replace('.', '', 1).replace('-', '', 1).replace(' ', '', 1).replace(',', '', 1).replace('\t', '', 1).strip().isdigit()
-    return pd.read_csv(uploaded_file, sep=sep, header=0 if is_header else None)
-
-def parse_dxf_to_df(uploaded_file):
+def parse_points(file, x_col, y_col, z_col, id_col):
+    """Chuẩn hóa cấu trúc bảng tọa độ đầu vào sang chuẩn đồ họa CAD (X, Y, Z, ID)"""
     try:
-        import ezdxf
-        dxf_bytes = uploaded_file.getvalue().decode("utf-8", errors="ignore")
-        doc = ezdxf.readstring(dxf_bytes)
-        msp = doc.modelspace()
-        points = []
-        for p in msp.query('POINT'): points.append(p.dxf.location)
-        for pl in msp.query('LWPOLYLINE'):
-            for p in pl.get_points(): points.append((p[0], p[1], p[2] if len(p) > 2 else 0.0))
-        return pd.DataFrame(points, columns=['X', 'Y', 'Z']) if points else None
-    except Exception: return None
+        df = pd.read_csv(file, sep=None, engine='python')
+        rename_dict = {x_col: 'X', y_col: 'Y', z_col: 'Z'}
+        if id_col and id_col != "Tự động tạo ID":
+            rename_dict[id_col] = 'ID'
+        df = df.rename(columns=rename_dict)
+        
+        if 'ID' not in df.columns or id_col == "Tự động tạo ID":
+            df['ID'] = range(1, len(df) + 1)
+            
+        return df[['ID', 'X', 'Y', 'Z']].dropna()
+    except Exception as e:
+        return None
 
-def detect_crs_and_headings(df):
-    try:
-        c0_min, c1_min = df.iloc[:, 0].min(), df.iloc[:, 1].min()
-        if (100000 <= c0_min <= 3000000) and (100000 <= c1_min <= 3000000):
-            return "VN2000", {"X": "North (X)", "Y": "East (Y)", "Z": "H", "ID": "ID"}
-    except Exception: pass
-    return "Tọa độ giả định", {"X": "X", "Y": "Y", "Z": "Z", "ID": "STT"}
+def interpolate_tin_z(tri, pts_3d, query_pts):
+    """Nội suy cao độ hình học dựa trên lưới đan tam giác chuẩn Civil3D"""
+    simplex = tri.find_simplex(query_pts)
+    valid = simplex >= 0
+    z_res = np.full(query_pts.shape[0], np.nan)
+    
+    for i in np.where(valid)[0]:
+        s = simplex[i]
+        v = tri.simplices[s]
+        b = tri.transform[s, :2].dot((query_pts[i] - tri.transform[s, 2]).T)
+        bary = np.r_[b, 1 - b.sum()]
+        z_res[i] = np.dot(bary, pts_3d[v, 2])
+    return z_res
 
-def compute_convex_hull(points_2d):
-    if len(points_2d) < 3: return points_2d
-    hull = ConvexHull(points_2d)
-    hull_points = points_2d[hull.vertices]
-    return np.vstack([hull_points, hull_points[0]])
+def export_to_dxf(p1, p2, tri1, tri2, min_x, max_x, min_y, max_y, h_size, id_size):
+    """Khởi tạo cấu trúc dữ liệu bản vẽ DXF phân tách lớp độc lập phục vụ AutoCAD"""
+    doc = ezdxf.new('R2010')
+    msp = doc.modelspace()
+    
+    layers_config = {
+        "TIN_SURFACE_1": 3,     # Green
+        "TIN_SURFACE_2": 4,     # Cyan
+        "BBORDER": 1,           # Red
+        "POINTS_SURFACE_1": 7,  # White
+        "POINTS_SURFACE_2": 2   # Yellow
+    }
+    for name, color in layers_config.items():
+        doc.layers.new(name=name, dxfattribs={'color': color})
+        
+    for tri in tri1.simplices:
+        pts = p1.iloc[tri][['X', 'Y', 'Z']].values
+        msp.add_3dface(pts, dxfattribs={'layer': 'TIN_SURFACE_1'})
+        
+    for tri in tri2.simplices:
+        pts = p2.iloc[tri][['X', 'Y', 'Z']].values
+        msp.add_3dface(pts, dxfattribs={'layer': 'TIN_SURFACE_2'})
+        
+    bbox_vertices = [(min_x, min_y), (max_x, min_y), (max_x, max_y), (min_x, max_y)]
+    msp.add_lwpolyline(bbox_vertices, dxfattribs={'layer': 'BBORDER', 'is_closed': True})
+        
+    for _, row in p1.iterrows():
+        msp.add_point((row['X'], row['Y'], row['Z']), dxfattribs={'layer': 'POINTS_SURFACE_1'})
+        msp.add_text(f"{row['Z']:.2f}", dxfattribs={'layer': 'POINTS_SURFACE_1', 'height': h_size}).set_placement((row['X'] + 0.1, row['Y'] + 0.1, row['Z']))
+        msp.add_text(f"#{int(row['ID'])}", dxfattribs={'layer': 'POINTS_SURFACE_1', 'height': id_size}).set_placement((row['X'] + 0.1, row['Y'] - (h_size * 0.8), row['Z']))
+        
+    for _, row in p2.iterrows():
+        msp.add_point((row['X'], row['Y'], row['Z']), dxfattribs={'layer': 'POINTS_SURFACE_2'})
+        msp.add_text(f"#{int(row['ID'])}", dxfattribs={'layer': 'POINTS_SURFACE_2', 'height': id_size}).set_placement((row['X'] + 0.1, row['Y'] + 0.1, row['Z']))
+        
+    out_stream = io.StringIO()
+    doc.write(out_stream)
+    return out_stream.getvalue()
