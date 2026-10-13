@@ -32,7 +32,7 @@ def interpolate_tin_z(tri, pts_3d, query_pts):
         bary = np.r_[b, 1 - b.sum()]
         z_res[i] = np.dot(bary, pts_3d[v, 2])
     return z_res
-    def extract_boundary_edges(tri):
+def extract_boundary_edges(tri):
     """Trích xuất các đoạn thẳng biên bên ngoài của lưới tam giác Delaunay"""
     edges = {}
     for simplex in tri.simplices:
@@ -45,11 +45,11 @@ def interpolate_tin_z(tri, pts_3d, query_pts):
     return boundary_edges
 
 def export_to_dxf(p1, p2, tri1, tri2, min_x, max_x, min_y, max_y, h_size, id_size):
-    """Khởi tạo cấu trúc dữ liệu bản vẽ DXF phân tách lớp độc lập phục vụ AutoCAD (Sửa lỗi Layer Color)"""
+    """Khởi tạo cấu trúc dữ liệu bản vẽ DXF phân tách lớp độc lập an toàn tuyệt đối"""
     doc = ezdxf.new('R2010')
     msp = doc.modelspace()
     
-    # Cấu hình màu sắc mã màu CAD chuẩn (ACI) cho từng Layer kỹ thuật độc lập
+    # Cấu hình màu sắc mã màu CAD chuẩn (ACI) cho từng Layer kỹ thuật
     layers_config = {
         "TIN_SURFACE_1": 3,     # Green (Xanh lá)
         "TIN_SURFACE_2": 4,     # Cyan (Xanh lam)
@@ -58,7 +58,7 @@ def export_to_dxf(p1, p2, tri1, tri2, min_x, max_x, min_y, max_y, h_size, id_siz
         "POINTS_SURFACE_2": 2   # Yellow (Vàng)
     }
     
-    # Khởi tạo Layer an toàn thông qua việc gán thuộc tính đối tượng trực tiếp
+    # Khởi tạo Layer thông qua gán thuộc tính đối tượng trực tiếp để tránh lỗi dxfattribs
     for name, color_code in layers_config.items():
         if name not in doc.layers:
             layer = doc.layers.new(name=name)
@@ -74,28 +74,32 @@ def export_to_dxf(p1, p2, tri1, tri2, min_x, max_x, min_y, max_y, h_size, id_siz
         pts = p2.iloc[tri][['X', 'Y', 'Z']].values
         msp.add_3dface(pts, dxfattribs={'layer': 'TIN_SURFACE_2'})
         
-    # 3. Xuất đường bao ranh giới giới hạn trực giao BBorder dạng khép kín an toàn
+    # 3. Xuất đường bao ranh giới giới hạn trực giao BBorder dạng khép kín
     bbox_vertices = [(min_x, min_y), (max_x, min_y), (max_x, max_y), (min_x, max_y)]
     polyline = msp.add_lwpolyline(bbox_vertices, dxfattribs={'layer': 'BBORDER'})
-    polyline.closed = True  # Đóng kín đường bao
+    polyline.closed = True  # Đóng kín đường bao ranh giới an toàn
         
     # 4. Xuất các điểm thuộc tính Bề mặt 1: Gồm POINT, cao độ H và số TT (ID nhỏ bằng 1/2 cao độ)
     for _, row in p1.iterrows():
+        # Thêm điểm POINT cơ sở
         msp.add_point((row['X'], row['Y'], row['Z']), dxfattribs={'layer': 'POINTS_SURFACE_1'})
-        # Text Cao độ H
+        
+        # Text Cao độ H - Chỉ truyền layer và height vào dxfattribs để tránh vấp lỗi thuộc tính hình học
         text_h = msp.add_text(f"{row['Z']:.2f}", dxfattribs={'layer': 'POINTS_SURFACE_1', 'height': h_size})
         text_h.set_placement((row['X'] + 0.1, row['Y'] + 0.1, row['Z']))
-        # Text Số thứ tự (Tỷ lệ 1/2 tự động)
+        
+        # Text Số thứ tự (Tỷ lệ chữ nhỏ bằng 1/2)
         text_id = msp.add_text(f"#{int(row['ID'])}", dxfattribs={'layer': 'POINTS_SURFACE_1', 'height': id_size})
         text_id.set_placement((row['X'] + 0.1, row['Y'] - (h_size * 0.8), row['Z']))
         
     # 5. Xuất các điểm thuộc tính Bề mặt 2: Chỉ bao gồm POINT và Số thứ tự (ID)
     for _, row in p2.iterrows():
         msp.add_point((row['X'], row['Y'], row['Z']), dxfattribs={'layer': 'POINTS_SURFACE_2'})
+        
         text_bm2_id = msp.add_text(f"#{int(row['ID'])}", dxfattribs={'layer': 'POINTS_SURFACE_2', 'height': id_size})
         text_bm2_id.set_placement((row['X'] + 0.1, row['Y'] + 0.1, row['Z']))
         
     out_stream = io.StringIO()
     doc.write(out_stream)
     return out_stream.getvalue()
-    
+                      
