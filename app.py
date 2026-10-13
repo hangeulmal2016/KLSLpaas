@@ -3,14 +3,13 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from scipy.spatial import Delaunay
-from utils import parse_points, interpolate_tin_z, export_to_dxf
+from utils import parse_points, interpolate_tin_z, export_to_dxf, extract_boundary_edges
 
 st.set_page_config(page_title="Xử lý Số liệu Trắc địa & Tính Khối lượng", layout="wide")
 
 st.title("🗺️ Web App Xử lý Số liệu Trắc địa & Tính Khối lượng (Civil3D Approach)")
-st.write("Phương án Online: **Cloud-Centric Streamlit** | Render hình học Client-side qua **Plotly 3D**")
+st.write("Phương án Online: **Cloud-Centric Streamlit** | Sửa lỗi gán kiểu dữ liệu CAD an toàn")
 
-# ================= NAVIGATION SIDEBAR =================
 st.sidebar.header("🛠️ 1. Nạp & Chuẩn hóa Dữ liệu")
 crs_type = st.sidebar.selectbox("Hệ tọa độ nhận dạng", ["VN-2000", "WGS84", "Tọa độ giả định"])
 
@@ -45,7 +44,6 @@ if file2:
     id2 = st.sidebar.selectbox("Mã điểm (ID)", ["Tự động tạo ID"] + cols2, key="id2")
     file2.seek(0)
     points2 = parse_points(file2, x2, y2, z2, id2)
-
 # ================= MAIN EXECUTION PIPELINE =================
 if points1 is not None and points2 is not None:
     pts1_2d = points1[['X', 'Y']].values
@@ -54,10 +52,10 @@ if points1 is not None and points2 is not None:
     tri1 = Delaunay(pts1_2d)
     tri2 = Delaunay(pts2_2d)
     
-    min_x = max(pts1_2d[:, 0].min(), pts2_2d[:, 0].min())
-    max_x = min(pts1_2d[:, 0].max(), pts2_2d[:, 0].max())
-    min_y = max(pts1_2d[:, 1].min(), pts2_2d[:, 1].min())
-    max_y = min(pts1_2d[:, 1].max(), pts2_2d[:, 1].max())
+    min_x = float(max(pts1_2d[:, 0].min(), pts2_2d[:, 0].min()))
+    max_x = float(min(pts1_2d[:, 0].max(), pts2_2d[:, 0].max()))
+    min_y = float(max(pts1_2d[:, 1].min(), pts2_2d[:, 1].min()))
+    max_y = float(min(pts1_2d[:, 1].max(), pts2_2d[:, 1].max()))
     
     if min_x > max_x or min_y > max_y:
         st.error("⚠️ Không tìm thấy vùng giới hạn trực giao giao nhau (BBorder) giữa hai tệp dữ liệu!")
@@ -119,11 +117,46 @@ Dien tich vung bien truc giao giao thoa (BBorder): {bborder_total_area:,.2f} m2
         st.download_button(label="📥 Tải xuống Bản vẽ CAD Hình học (.DXF)", data=dxf_data, file_name="BanVe_MoHinh_TIN.dxf", mime="application/dxf")
         
         # --- DISPLAY PLOTLY 3D ---
-        st.header("📦 3. Mô hình Hình học Lưới TIN Không gian 3D")
+        st.header("📦 3. Mô hình Hình học Không gian 3D nâng cao")
         fig = go.Figure()
-        fig.add_trace(go.Mesh3d(x=points1['X'], y=points1['Y'], z=points1['Z'], intensity=points1['Z'], colorscale='Viridis', name='Bề mặt 1', opacity=0.7, showscale=False))
-        fig.add_trace(go.Mesh3d(x=points2['X'], y=points2['Y'], z=points2['Z'], intensity=points2['Z'], colorscale='Cividis', name='Bề mặt 2', opacity=0.5, showscale=False))
-        fig.update_layout(scene=dict(xaxis_title='X', yaxis_title='Y', zaxis_title='Z'), margin=dict(l=0, r=0, b=0, t=30), height=600)
+        
+        fig.add_trace(go.Mesh3d(x=points1['X'], y=points1['Y'], z=points1['Z'], intensity=points1['Z'], colorscale='Viridis', name='Bề mặt 1 (Hiện trạng)', opacity=0.6, showscale=False))
+        fig.add_trace(go.Mesh3d(x=points2['X'], y=points2['Y'], z=points2['Z'], intensity=points2['Z'], colorscale='Cividis', name='Bề mặt 2 (Cơ sở)', opacity=0.4, showscale=False))
+        
+        edges_1 = extract_boundary_edges(tri1)
+        v_x, v_y, v_z = [], [], []
+        i_idx, j_idx, k_idx = [], [], []
+        p_count = 0
+        
+        for edge in edges_1:
+            p1_node = points1.iloc[edge[0]]
+            p2_node = points1.iloc[edge[1]]
+            
+            z1_base = interpolate_tin_z(tri2, points2[['X', 'Y', 'Z']].values, np.array([[p1_node['X'], p1_node['Y']]]))
+            z2_base = interpolate_tin_z(tri2, points2[['X', 'Y', 'Z']].values, np.array([[p2_node['X'], p2_node['Y']]]))
+            
+            if not np.isnan(z1_base[0]) and not np.isnan(z2_base[0]):
+                v_x.extend([float(p1_node['X']), float(p2_node['X']), float(p1_node['X']), float(p2_node['X'])])
+                v_y.extend([float(p1_node['Y']), float(p2_node['Y']), float(p1_node['Y']), float(p2_node['Y'])])
+                v_z.extend([float(p1_node['Z']), float(p2_node['Z']), float(z1_base[0]), float(z2_base[0])])
+                
+                i_idx.extend([p_count, p_count+1, p_count+1])
+                j_idx.extend([p_count+1, p_count+2, p_count+2])
+                k_idx.extend([p_count+2, p_count, p_count+3])
+                p_count += 4
+                
+        if p_count > 0:
+            fig.add_trace(go.Mesh3d(x=v_x, y=v_y, z=v_z, i=i_idx, j=j_idx, k=k_idx, color='crimson', name='Vertical Side Surface', opacity=0.85))
+            skirt_z = [z * 1.01 if z > 0 else z * 0.99 for z in v_z]
+            fig.add_trace(go.Mesh3d(x=v_x, y=v_y, z=skirt_z, i=i_idx, j=j_idx, k=k_idx, color='darkorange', name='Mesh Skirt (Mái dốc biên)', opacity=0.7))
+
+        bbox_x = [min_x, max_x, max_x, min_x, min_x]
+        bbox_y = [min_y, min_y, max_y, max_y, min_y]
+        bbox_z = [float(max(points1['Z'].max(), points2['Z'].max()) + 1.0)] * 5
+        
+        fig.add_trace(go.Scatter3d(x=bbox_x, y=bbox_y, z=bbox_z, mode='lines', line=dict(color='black', width=5), name='Ranh giới BBorder trực giao'))
+        fig.update_layout(scene=dict(xaxis_title='Easting (X)', yaxis_title='Northing (Y)', zaxis_title='Cao độ H (Z)'), margin=dict(l=0, r=0, b=0, t=30), height=650)
         st.plotly_chart(fig, use_container_width=True)
 else:
     st.info("💡 Hệ thống đang đợi bạn tải các tệp trắc địa bề mặt lên bảng điều khiển bên trái để phân tích hình học.")
+    
